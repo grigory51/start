@@ -42,12 +42,14 @@ cd ~/PersonalWorkspace/claude-agents
 ./install.sh
 ```
 
-`install.sh` создаёт **per-item symlink'и** в `~/.claude/`:
-- `~/.claude/agents/<agent>.md` → файлы этого репо
-- `~/.claude/skills/my-principles` → навык этого репо
-- `~/.claude/hooks/notify.sh` → скрипт нотификаций (см. раздел «Нотификации»)
+`install.sh` создаёт symlink'и в `~/.claude/`:
+- `~/.claude/agents` → `repo/agents` (вся папка одним линком)
+- `~/.claude/skills` → `repo/skills` (вся папка одним линком)
+- `~/.claude/hooks/notify.sh` → `repo/hooks/notify.sh` (per-file)
 
-Per-item (а не symlink всей папки) — чтобы не конфликтовать с plugin-агентами и прочим в `~/.claude/`.
+Папки `agents` и `skills` линкуются целиком — новый агент/навык подхватывается сразу, без повторного `install.sh`. `hooks` линкуется по-файлу: там рядом лежат сторонние хуки (напр. caveman), папку перекрывать нельзя.
+
+При первом запуске поверх старой per-file схемы install.sh сам мигрирует: удалит свои per-file симлинки и поставит folder-link. Посторонние файлы в `agents`/`skills` не трогает без `--force`.
 
 Флаги:
 - `./install.sh --dry-run` — показать действия без изменений
