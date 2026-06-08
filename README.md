@@ -45,6 +45,7 @@ cd ~/PersonalWorkspace/claude-agents
 `install.sh` создаёт **per-item symlink'и** в `~/.claude/`:
 - `~/.claude/agents/<agent>.md` → файлы этого репо
 - `~/.claude/skills/my-principles` → навык этого репо
+- `~/.claude/hooks/notify.sh` → скрипт нотификаций (см. раздел «Нотификации»)
 
 Per-item (а не symlink всей папки) — чтобы не конфликтовать с plugin-агентами и прочим в `~/.claude/`.
 
@@ -67,6 +68,37 @@ claude --agent architect
 Worker-агентов можно звать и вручную в обычной сессии: `@programmer ...`, `@reviewer ...`.
 
 Проверить, что агенты подключены: внутри сессии `/agents`.
+
+## Нотификации (когда агент ждёт тебя)
+
+macOS-баннер прилетает, когда:
+- агент **ждёт ввода** (простой сессии, `idle_prompt`);
+- агент **просит разрешение** на действие (`permission_prompt`);
+- главный агент **закончил ход** (`Stop`) — удобно для долгих architect-циклов.
+
+Канал — macOS Notification Center (`osascript`), **без звука**. Не пересекается с `agentPushNotifEnabled` (это mobile push на телефон — отдельный канал).
+
+**Подключение** (раз на машину):
+
+1. `./install.sh` линкует `hooks/notify.sh` в `~/.claude/hooks/`.
+2. Зарегистрировать события в `~/.claude/settings.json` (файл НЕ в этом репо — правится вручную). В существующий объект `hooks` добавить ключи:
+
+```json
+"Notification": [
+  { "matcher": "idle_prompt|permission_prompt",
+    "hooks": [ { "type": "command", "command": "bash \"$HOME/.claude/hooks/notify.sh\"", "timeout": 5 } ] }
+],
+"Stop": [
+  { "hooks": [ { "type": "command", "command": "bash \"$HOME/.claude/hooks/notify.sh\"", "timeout": 5 } ] }
+]
+```
+
+> Не перезаписывай весь `hooks` — **добавь** эти два ключа к тем, что уже есть.
+
+**Настройка:**
+- Убрать уведомление о завершении хода → удали ключ `"Stop"`.
+- Добавить звук → в `hooks/notify.sh` допиши в `osascript` `... sound name "Glass"`.
+- Альтернатива без скрипта → встроенный `preferredNotifChannel` в `~/.claude/settings.json` (`"auto"` — баннер в Ghostty/Kitty/iTerm2; `"terminal_bell"` — звонок). Покрывает done+permission, но без гибкости этого хука.
 
 ## Кастомизация
 

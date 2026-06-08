@@ -85,7 +85,20 @@ for d in "$REPO_DIR"/skills/*/; do
 done
 say ""
 
+# --- Hooks: per-file symlink в ~/.claude/hooks/ ---
+say "Hooks -> $CLAUDE_DIR/hooks/"
+run "mkdir -p \"$CLAUDE_DIR/hooks\""
+for f in "$REPO_DIR"/hooks/*.sh; do
+  [ -e "$f" ] || continue
+  link_item "$f" "$CLAUDE_DIR/hooks/$(basename "$f")"
+done
+say ""
+
 say "Готово."
 say ""
 say "Запуск оркестратора:  claude --agent architect"
 say "Список агентов:        /agents  (внутри сессии Claude Code)"
+say ""
+say "Нотификации: hooks/notify.sh подключён в ~/.claude/hooks/, но событийные"
+say "хуки регистрируются в ~/.claude/settings.json вручную (см. README, раздел"
+say "«Нотификации»). settings.json не в этом репо — не перезаписываем его."
