@@ -1,5 +1,8 @@
 # macOS
 .DS_Store
 
-# install.sh backups
+# install.py backups
 *.bak
+
+# локальный overlay над skills.toml (машино-/пользователь-специфичный)
+skills.local.toml

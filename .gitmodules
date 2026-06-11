@@ -1,0 +1,3 @@
+[submodule "contrib/blender-skills"]
+	path = contrib/blender-skills
+	url = git@github.com:kevinbadi/blender-skills.git
