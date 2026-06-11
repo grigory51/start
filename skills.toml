@@ -22,3 +22,7 @@
 path = "contrib/blender-skills"
 include = "*"
 # exclude = ["threejs-export"]
+
+[[source]]
+path = "contrib/infostyle-skill/skills"
+include = "*"

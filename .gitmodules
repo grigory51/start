@@ -1,3 +1,6 @@
 [submodule "contrib/blender-skills"]
 	path = contrib/blender-skills
 	url = git@github.com:kevinbadi/blender-skills.git
+[submodule "contrib/infostyle-skill"]
+	path = contrib/infostyle-skill
+	url = https://github.com/artgas1/infostyle-skill
