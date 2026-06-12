@@ -1,8 +1,12 @@
 # macOS
 .DS_Store
 
-# install.py backups
+# install backups
 *.bak
 
-# локальный overlay над skills.toml (машино-/пользователь-специфичный)
-skills.local.toml
+# локальный overlay над config.toml (машино-/пользователь-специфичный)
+config.local.toml
+
+# uv / python
+.venv/
+__pycache__/
