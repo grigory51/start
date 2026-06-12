@@ -5,9 +5,8 @@
 Раскладка:
   agents  — folder-symlink ~/.claude/agents -> repo/agents
             (новые агенты подхватываются без повторного запуска).
-  skills  — ~/.claude/skills это РЕАЛЬНАЯ папка с per-skill symlink'ами:
-              repo/skills/*           линкуются всегда;
-              contrib/*  (сабмодули)  линкуются по skills.toml.
+  skills  — ~/.claude/skills это РЕАЛЬНАЯ папка с per-skill symlink'ами.
+            Источники (repo/skills, contrib/* сабмодули) перечислены в skills.toml.
             Per-skill, чтобы смешивать несколько источников в одной папке.
   hooks   — per-file symlink в ~/.claude/hooks/ (папку не трогаем: там лежат
             сторонние хуки не из репо).
@@ -157,30 +156,19 @@ def is_skill(p: Path) -> bool:
 
 
 def discover_skills(ctx: Ctx) -> list[Path]:
-    """Собрать список папок-скилов: repo/skills/* + источники из skills.toml.
+    """Собрать список папок-скилов из источников skills.toml.
 
     Возвращает абсолютные пути. Конфликты имён логирует и берёт первое вхождение.
     """
     found: dict[str, Path] = {}
 
-    def add(src: Path) -> None:
+    for src in _config_sources(ctx):
         if src.name in found:
             ctx.say(f"  ! дубль имени скила '{src.name}': {src} — пропуск "
                     f"(уже взят {found[src.name]})")
             ctx.errors += 1
-            return
+            continue
         found[src.name] = src
-
-    # repo/skills/* — всегда.
-    skills_root = REPO_DIR / "skills"
-    if skills_root.is_dir():
-        for entry in sorted(skills_root.iterdir()):
-            if is_skill(entry):
-                add(entry)
-
-    # contrib-источники по конфигу.
-    for src in _config_sources(ctx):
-        add(src)
 
     return list(found.values())
 
@@ -193,7 +181,7 @@ def _config_sources(ctx: Ctx) -> list[Path]:
     for rel, entry in entries:
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
-            ctx.say(f"  ! источник не найден: {rel} (сабмодуль не инициализирован? "
+            ctx.say(f"  ! источник не найден: {rel} (нет папки; для сабмодуля — "
                     f"git submodule update --init)")
             ctx.errors += 1
             continue
@@ -254,7 +242,7 @@ def _merged_entries(ctx: Ctx) -> list[tuple[str, dict]]:
     local = _load_entries(ctx, CONFIG_LOCAL)
 
     if not base and not local and not CONFIG.is_file():
-        ctx.say(f"  i {CONFIG.name} не найден — только repo/skills/*")
+        ctx.say(f"  i {CONFIG.name} не найден — скилы не линкуются")
         return []
     if local:
         ctx.say(f"  i применён overlay {CONFIG_LOCAL.name}")

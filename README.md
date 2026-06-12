@@ -53,9 +53,8 @@ make up
 
 `install.py` (Python 3.11+, только stdlib) создаёт symlink'и в `~/.claude/`:
 - `~/.claude/agents` → `repo/agents` (вся папка одним линком)
-- `~/.claude/skills/` — **реальная папка** с per-skill симлинками:
-  - `repo/skills/*` — линкуются всегда;
-  - `contrib/<сабмодуль>/<skill>` — по `skills.toml`.
+- `~/.claude/skills/` — **реальная папка** с per-skill симлинками; источники
+  (`repo/skills`, сабмодули `contrib/<...>`) перечислены в `skills.toml`.
 - `~/.claude/hooks/notify.sh` → `repo/hooks/notify.sh` (per-file)
 
 `agents` линкуется целиком — новый агент подхватывается сразу. `skills` линкуется **по-скилу**, чтобы в одну папку `~/.claude/skills/` сходились скилы из репо и из внешних сабмодулей `contrib/` одновременно (folder-link так не умеет). `hooks` линкуется по-файлу: рядом лежат сторонние хуки (напр. caveman), папку перекрывать нельзя.
