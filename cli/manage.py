@@ -1,8 +1,8 @@
 """manage.py — Textual TUI для просмотра агентов и управления скилами.
 
 Две вкладки:
-  Агенты  — список агентов репо (имя + описание). Enter открывает модалку с
-            телом `.md`-файла.
+  Агенты  — агенты из [[agents]]-источников config.toml, сгруппированные по
+            источнику (имя + описание). Enter открывает модалку с телом `.md`.
   Скилы   — список скилов: статус, имя, источник, описание. Enter открывает
             модалку с `SKILL.md`. Space/`t` включает/выключает скил: правится
             `disabled` в config.local.toml, затем дёргается install (без
@@ -17,12 +17,13 @@ import io
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
-    DataTable, Footer, Header, Markdown, Static, TabbedContent, TabPane,
+    DataTable, Footer, Header, Input, Markdown, Static, TabbedContent, TabPane,
 )
 
 from . import config
@@ -62,29 +63,84 @@ class ContentScreen(ModalScreen):
         self.dismiss()
 
 
+class AddSubmoduleScreen(ModalScreen):
+    """Модалка добавления сабмодуля. Поля: URL, имя (опц.), подпапка (опц.).
+
+    Enter в любом поле / на кнопке-инструкции запускает добавление. Возвращает
+    (через dismiss) словарь полей или None при отмене. Сам git-вызов делает
+    вызывающая сторона — модалка только собирает ввод.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Отмена", show=True),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Container(id="modal-box"):
+            yield Static("[b]Добавить сабмодуль[/]", id="modal-title")
+            with VerticalScroll(id="modal-scroll"):
+                yield Static("URL git-репозитория со скилами:")
+                yield Input(placeholder="https://github.com/owner/repo", id="sub-url")
+                yield Static("Имя папки в contrib/ [dim](пусто = из URL)[/]:")
+                yield Input(placeholder="(авто)", id="sub-name")
+                yield Static("Подпапка со скилами [dim](пусто = автодетект)[/]:")
+                yield Input(placeholder="(автодетект)", id="sub-subdir")
+            yield Static("[dim]Enter — добавить · Esc — отмена[/]", id="modal-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#sub-url", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._submit()
+
+    def _submit(self) -> None:
+        url = self.query_one("#sub-url", Input).value.strip()
+        if not url:
+            self.query_one("#modal-hint", Static).update("[yellow]URL обязателен[/]")
+            return
+        name = self.query_one("#sub-name", Input).value.strip() or None
+        subdir = self.query_one("#sub-subdir", Input).value.strip()
+        # пусто → автодетект (None); заполнено → точное значение.
+        self.dismiss({"url": url, "name": name,
+                      "skills_subdir": subdir if subdir else None})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class AgentsPane(TabPane):
     """Просмотр агентов. Enter открывает модалку с телом .md."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._rows: list[config.Agent] = []
+        # Параллельно строкам таблицы: Agent или None для строк-разделителей.
+        self._row_map: list[config.Agent | None] = []
 
     def compose(self) -> ComposeResult:
         yield DataTable(id="agents-table", cursor_type="row", zebra_stripes=True)
 
     def on_mount(self) -> None:
         table = self.query_one("#agents-table", DataTable)
-        table.add_column("Агент", width=18)
+        table.add_column("Агент", width=20)
         table.add_column("Описание")
-        self._rows = config.load_agents()
-        for a in self._rows:
-            table.add_row(a.name, _truncate(a.description, 100))
+        self._row_map = []
+        last_source: str | None = None
+        for a in config.load_agents():
+            if a.source != last_source:
+                # Заголовок-разделитель группы источника.
+                table.add_row(f"[b]{a.source}[/]", "", height=1)
+                self._row_map.append(None)
+                last_source = a.source
+            table.add_row(f"  {a.name}", _truncate(a.description, 100))
+            self._row_map.append(a)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         row = event.cursor_row
-        if row is None or row >= len(self._rows):
+        if row is None or row >= len(self._row_map):
             return
-        a = self._rows[row]
+        a = self._row_map[row]
+        if a is None:  # строка-разделитель
+            return
         self.app.push_screen(ContentScreen(a.name, a.path))
 
 
@@ -93,6 +149,7 @@ class SkillsPane(TabPane):
 
     BINDINGS = [
         Binding("space,t", "toggle", "Вкл/выкл", show=True),
+        Binding("a", "add_submodule", "Добавить сабмодуль", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -190,6 +247,36 @@ class SkillsPane(TabPane):
         else:
             self._status(f"{skill.name} {verb} ✓ symlink'и обновлены")
         self._reload()
+
+    def action_add_submodule(self) -> None:
+        self.app.push_screen(AddSubmoduleScreen(), self._on_submodule_form)
+
+    def _on_submodule_form(self, fields: dict | None) -> None:
+        if not fields:  # отмена
+            return
+        self._status(f"добавляю сабмодуль {fields['url']} …")
+        # git submodule add сетевой — может занять время; выполняем в thread-воркере,
+        # чтобы не блокировать UI-поток. Результат рисуем через call_from_thread.
+        self._add_submodule_worker(fields)
+
+    @work(thread=True, exclusive=True)
+    def _add_submodule_worker(self, fields: dict) -> None:
+        from .submodule import add_submodule
+
+        res = add_submodule(
+            fields["url"], name=fields["name"],
+            skills_subdir=fields["skills_subdir"], quiet=True)
+        self.app.call_from_thread(self._on_submodule_done, res)
+
+    def _on_submodule_done(self, res) -> None:
+        if res.ok:
+            msg = res.message
+            if res.install_errors:
+                msg += f" (install: {res.install_errors} предупр.)"
+            self._status(f"✓ {msg}")
+            self._reload()
+        else:
+            self._status(f"✗ {res.message}", warn=True)
 
 
 class ManagerApp(App):

@@ -25,13 +25,18 @@ class Skill:
     source: str          # path источника из config.toml
     enabled: bool        # не в disabled и источник включён
     description: str = ""
+    # Доп. symlink'и из [[skills.symlinks]] источника: [{source, destination}].
+    # source — путь относительно корня репо; destination — имя/путь внутри
+    # папки-зеркала скила. Применяются к каждому скилу источника.
+    symlinks: list[dict] = field(default_factory=list)
 
 
 @dataclass
 class Agent:
-    """Найденный агент: имя файла без .md, путь, описание из frontmatter."""
+    """Найденный агент: имя файла без .md, путь, источник, описание из frontmatter."""
     name: str
     path: Path
+    source: str = ""     # path источника из config.toml ([[agents]])
     description: str = ""
 
 
@@ -97,25 +102,27 @@ def _load_doc(path: Path, warnings: list[str]) -> dict:
         return {}
 
 
-def _entries(doc: dict, fname: str, warnings: list[str]) -> list[dict]:
-    """[[source]] из документа, отфильтрованные по наличию path."""
+def _entries(doc: dict, fname: str, warnings: list[str], key: str = "skills") -> list[dict]:
+    """[[key]] из документа, отфильтрованные по наличию path (key: skills/agents)."""
     out: list[dict] = []
-    for entry in doc.get("source", []):
+    for entry in doc.get(key, []):
         if not entry.get("path"):
-            warnings.append(f"[[source]] без path в {fname} — пропуск")
+            warnings.append(f"[[{key}]] без path в {fname} — пропуск")
             continue
         out.append(entry)
     return out
 
 
-def _merged_sources(base: dict, local: dict, warnings: list[str]) -> list[tuple[str, dict]]:
+def _merged_sources(base: dict, local: dict, warnings: list[str],
+                    key: str = "skills") -> list[tuple[str, dict]]:
     """База ⊕ overlay по `path`. local с тем же path переопределяет целиком.
 
-    enabled = false выключает источник. Возвращает [(path, entry)] в порядке:
-    база (позиция сохраняется), затем новые local-источники.
+    key — какую секцию мёрджить ([[skills]] или [[agents]]). enabled = false
+    выключает источник. Возвращает [(path, entry)] в порядке: база (позиция
+    сохраняется), затем новые local-источники.
     """
-    base_e = _entries(base, CONFIG.name, warnings)
-    local_e = _entries(local, CONFIG_LOCAL.name, warnings)
+    base_e = _entries(base, CONFIG.name, warnings, key)
+    local_e = _entries(local, CONFIG_LOCAL.name, warnings, key)
 
     merged: dict[str, dict] = {}
     order: list[str] = []
@@ -138,6 +145,29 @@ def _merged_sources(base: dict, local: dict, warnings: list[str]) -> list[tuple[
             continue
         result.append((p, entry))
     return result
+
+
+def _parse_symlinks(entry: dict, rel: str, warnings: list[str]) -> list[dict]:
+    """Разобрать [[skills.symlinks]] источника: список {source, destination}.
+
+    nested array-of-tables → entry["symlinks"] = list[dict]. Каждая запись обязана
+    иметь непустые source/destination (строки). source — путь относительно корня
+    репо; destination — имя/путь внутри папки-зеркала скила (нормализуется strip).
+    Битые записи пропускаются с warning.
+    """
+    out: list[dict] = []
+    raw = entry.get("symlinks", [])
+    if not isinstance(raw, list):
+        warnings.append(f"{rel}: [[skills.symlinks]] не список — игнорирую")
+        return out
+    for sl in raw:
+        src = (sl.get("source") or "").strip() if isinstance(sl, dict) else ""
+        dst = (sl.get("destination") or "").strip().strip("/") if isinstance(sl, dict) else ""
+        if not src or not dst:
+            warnings.append(f"{rel}: [[skills.symlinks]] без source/destination — пропуск")
+            continue
+        out.append({"source": src, "destination": dst})
+    return out
 
 
 def load() -> ConfigResult:
@@ -169,6 +199,7 @@ def load() -> ConfigResult:
 
         include = entry.get("include", "*")
         exclude = set(entry.get("exclude", []))
+        symlinks = _parse_symlinks(entry, rel, res.warnings)
         available = {p.name: p for p in root.iterdir() if is_skill(p)}
 
         names = sorted(available) if include == "*" else list(include)
@@ -187,6 +218,7 @@ def load() -> ConfigResult:
                 name=n, path=available[n], source=rel,
                 enabled=n not in res.disabled,
                 description=_read_description(available[n] / "SKILL.md"),
+                symlinks=symlinks,
             )
 
     # Порядок: источники в порядке config.toml, внутри — имена по алфавиту
@@ -195,15 +227,50 @@ def load() -> ConfigResult:
     return res
 
 
+def _discover_agents() -> tuple[list[Agent], list[str]]:
+    """Все агенты из [[agents]]-источников config.toml (+ overlay) и warnings.
+
+    Зеркало skill-цикла в load(): источники в порядке config.toml, внутри —
+    имена по алфавиту. Конфликт имён: первое вхождение, дубль → warnings
+    (как у скилов). Поштучного disable у агентов нет — все найденные линкуются.
+    """
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    local = _load_doc(CONFIG_LOCAL, warnings)
+
+    seen: dict[str, Agent] = {}
+    for rel, entry in _merged_sources(base, local, warnings, key="agents"):
+        root = (REPO_DIR / rel).resolve()
+        if not root.is_dir():
+            warnings.append(
+                f"источник агентов не найден: {rel} (нет папки; для сабмодуля — "
+                f"git submodule update --init)")
+            continue
+
+        include = entry.get("include", "*")
+        exclude = set(entry.get("exclude", []))
+        available = {p.stem: p for p in root.glob("*.md")}
+
+        names = sorted(available) if include == "*" else list(include)
+        for n in names:
+            if n not in available:
+                warnings.append(f"{rel}: агент '{n}' не найден (нет {n}.md)")
+                continue
+            if n in exclude:
+                continue
+            if n in seen:
+                warnings.append(
+                    f"дубль имени агента '{n}': {rel} — пропуск "
+                    f"(уже взят из {seen[n].source})")
+                continue
+            seen[n] = Agent(name=n, path=available[n], source=rel,
+                            description=_read_description(available[n]))
+    return list(seen.values()), warnings
+
+
 def load_agents() -> list[Agent]:
-    """Все агенты из repo/agents (*.md), отсортированные по имени."""
-    root = REPO_DIR / "agents"
-    if not root.is_dir():
-        return []
-    agents = [
-        Agent(name=p.stem, path=p, description=_read_description(p))
-        for p in sorted(root.glob("*.md"))
-    ]
+    """Все агенты из [[agents]]-источников. Warnings глушатся (для TUI)."""
+    agents, _ = _discover_agents()
     return agents
 
 
@@ -221,7 +288,7 @@ def set_disabled(name: str, disabled: bool) -> None:
 
     Версионный config.toml остаётся нетронутым — toggle пишет только в local
     overlay (gitignored), его `disabled` объединяется с базовым при load().
-    Файл создаётся при первом toggle, существующие комментарии/[[source]]
+    Файл создаётся при первом toggle, существующие комментарии/[[skills]]
     сохраняются (tomlkit).
 
     disabled=True  → добавить имя в список (если ещё нет).
@@ -251,3 +318,41 @@ def set_disabled(name: str, disabled: bool) -> None:
                 break
 
     CONFIG_LOCAL.write_text(tomlkit.dumps(doc))
+
+
+def source_paths() -> set[str]:
+    """Все path из [[skills]] базового config.toml (для проверки дублей)."""
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    return {e["path"] for e in _entries(base, CONFIG.name, warnings, key="skills")}
+
+
+def add_source(rel_path: str, *, include="*", exclude: list[str] | None = None) -> bool:
+    """Добавить [[skills]] с данным path в версионный config.toml (tomlkit).
+
+    Пишет в базовый config.toml, а не в overlay: добавление сабмодуля —
+    версионное изменение (как запись в .gitmodules). Комментарии/форматирование
+    сохраняются. Дубль path игнорируется. Регистрирует источник скилов; источники
+    агентов ([[agents]]) добавляются в config.toml вручную.
+
+    Возвращает True, если источник добавлен; False — если path уже есть.
+    """
+    import tomlkit
+
+    if rel_path in source_paths():
+        return False
+
+    # Рендерим новый [[skills]] как текст и дописываем в конец файла. tomlkit
+    # при append в AoT кладёт отбивку внутрь header'а ([[skills]] + пустая строка),
+    # что ломает выравнивание; текстовый append даёт ровно тот же стиль, что в base.
+    block = ("\n[[skills]]\n"
+             f'path = "{rel_path}"\n'
+             f"include = {tomlkit.item(include).as_string()}\n")
+    if exclude:
+        block += f"exclude = {tomlkit.item(exclude).as_string()}\n"
+
+    existing = CONFIG.read_text() if CONFIG.is_file() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    CONFIG.write_text(existing + block)
+    return True

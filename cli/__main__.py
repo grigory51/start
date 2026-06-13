@@ -25,6 +25,20 @@ def _cmd_manage(args: argparse.Namespace) -> int:
     return run_manage()
 
 
+def _cmd_add_submodule(args: argparse.Namespace) -> int:
+    from .submodule import add_submodule
+    res = add_submodule(
+        args.url,
+        name=args.name,
+        skills_subdir=args.skills_subdir,
+        do_install=not args.no_install,
+    )
+    print(("✓ " if res.ok else "✗ ") + res.message)
+    if res.ok and res.install_errors:
+        print(f"  install с предупреждениями: {res.install_errors}")
+    return 0 if res.ok else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="claude-agents",
@@ -42,6 +56,18 @@ def main() -> int:
 
     manage = sub.add_parser("manage", help="TUI: агенты и скилы")
     manage.set_defaults(func=_cmd_manage)
+
+    addsub = sub.add_parser(
+        "add-submodule",
+        help="добавить git-сабмодуль в contrib/ и зарегистрировать source в config.toml")
+    addsub.add_argument("url", help="URL git-репозитория со скилами")
+    addsub.add_argument("--name", help="имя папки в contrib/ (по умолчанию из URL)")
+    addsub.add_argument("--skills-subdir", default=None,
+                        help="подпапка со скилами относительно корня сабмодуля "
+                             "(по умолчанию автодетект; '' = корень)")
+    addsub.add_argument("--no-install", action="store_true",
+                        help="не раскладывать symlink'и после добавления")
+    addsub.set_defaults(func=_cmd_add_submodule)
 
     args = ap.parse_args()
     if not getattr(args, "func", None):

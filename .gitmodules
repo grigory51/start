@@ -4,3 +4,6 @@
 [submodule "contrib/infostyle-skill"]
 	path = contrib/infostyle-skill
 	url = https://github.com/artgas1/infostyle-skill
+[submodule "contrib/claude-seo"]
+	path = contrib/claude-seo
+	url = https://github.com/AgriciDaniel/claude-seo
