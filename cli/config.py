@@ -1,7 +1,14 @@
-"""config.py — чтение config.toml, обнаружение скилов, список выключенных.
+"""config.py — чтение config.toml, обнаружение скилов, вкл/выкл через `enabled`.
 
-Чтение (merge базы и local-overlay) — на tomllib. Запись (toggle `disabled`) —
-на tomlkit, чтобы сохранить комментарии и форматирование версионного файла.
+Состояние вкл/выкл скилов хранится в поле `enabled` источника ([[skills]]):
+  - enabled = ["*"]      — все скилы источника (по умолчанию);
+  - enabled = ["a", "c"] — только перечисленные;
+  - enabled = []         — ни одного (источник выключен целиком).
+Отдельного списка `disabled` нет — выключение скила = удаление его имени из
+`enabled` (с разворачиванием "*" в явный список).
+
+Чтение — на tomllib. Запись (toggle) — на tomlkit, чтобы сохранить комментарии и
+форматирование. TUI правит `enabled` прямо в версионном config.toml.
 """
 
 from __future__ import annotations
@@ -12,7 +19,6 @@ from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 CONFIG = REPO_DIR / "config.toml"
-CONFIG_LOCAL = REPO_DIR / "config.local.toml"  # gitignored, переопределяет CONFIG
 
 
 # --- модель -------------------------------------------------------------------
@@ -23,7 +29,7 @@ class Skill:
     name: str
     path: Path
     source: str          # path источника из config.toml
-    enabled: bool        # не в disabled и источник включён
+    enabled: bool        # имя есть в `enabled`-списке источника
     description: str = ""
     # Доп. symlink'и из [[skills.symlinks]] источника: [{source, destination}].
     # source — путь относительно корня репо; destination — имя/путь внутри
@@ -44,7 +50,6 @@ class Agent:
 class ConfigResult:
     """Результат разбора конфига для дальнейшей линковки и UI."""
     skills: list[Skill] = field(default_factory=list)
-    disabled: set[str] = field(default_factory=set)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -113,38 +118,48 @@ def _entries(doc: dict, fname: str, warnings: list[str], key: str = "skills") ->
     return out
 
 
-def _merged_sources(base: dict, local: dict, warnings: list[str],
-                    key: str = "skills") -> list[tuple[str, dict]]:
-    """База ⊕ overlay по `path`. local с тем же path переопределяет целиком.
+def _sources(doc: dict, warnings: list[str],
+             key: str = "skills") -> list[tuple[str, dict]]:
+    """[[key]]-источники из config.toml как [(path, entry)] в порядке файла.
 
-    key — какую секцию мёрджить ([[skills]] или [[agents]]). enabled = false
-    выключает источник. Возвращает [(path, entry)] в порядке: база (позиция
-    сохраняется), затем новые local-источники.
+    key — какую секцию читать ([[skills]] или [[agents]]). Дубль path: первый
+    выигрывает, остальные в warnings.
     """
-    base_e = _entries(base, CONFIG.name, warnings, key)
-    local_e = _entries(local, CONFIG_LOCAL.name, warnings, key)
-
-    merged: dict[str, dict] = {}
-    order: list[str] = []
-    for entry in base_e:
+    out: list[tuple[str, dict]] = []
+    seen: set[str] = set()
+    for entry in _entries(doc, CONFIG.name, warnings, key):
         p = entry["path"]
-        if p not in merged:
-            order.append(p)
-        merged[p] = entry
-    for entry in local_e:
-        p = entry["path"]
-        if p not in merged:
-            order.append(p)
-        merged[p] = entry  # local выигрывает целиком
-
-    result: list[tuple[str, dict]] = []
-    for p in order:
-        entry = merged[p]
-        if entry.get("enabled", True) is False:
-            warnings.append(f"источник {p} выключен (enabled = false)")
+        if p in seen:
+            warnings.append(f"дубль источника {p} в {CONFIG.name} — пропуск")
             continue
-        result.append((p, entry))
-    return result
+        seen.add(p)
+        out.append((p, entry))
+    return out
+
+
+def _enabled_spec(entry: dict) -> list[str]:
+    """`enabled`-список источника. Дефолт ["*"] (все). Терпит старый bool/строку.
+
+    Нормализует к list[str]: ["*"] — все, [] — ни одного, иначе явные имена.
+    Обратная совместимость: enabled = false → [], enabled = true/отсутствует → ["*"].
+    """
+    raw = entry.get("enabled", ["*"])
+    if raw is True:
+        return ["*"]
+    if raw is False:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    return ["*"]
+
+
+def _select_names(spec: list[str], available: list[str]) -> set[str]:
+    """Какие скилы источника включены: разворачивает "*" в все доступные имена."""
+    if "*" in spec:
+        return set(available)
+    return set(spec)
 
 
 def _parse_symlinks(entry: dict, rel: str, warnings: list[str]) -> list[dict]:
@@ -171,25 +186,22 @@ def _parse_symlinks(entry: dict, rel: str, warnings: list[str]) -> list[dict]:
 
 
 def load() -> ConfigResult:
-    """Разобрать config.toml (+ local overlay) и обнаружить все скилы.
+    """Разобрать config.toml и обнаружить все скилы.
 
     Конфликты имён скилов: берётся первое вхождение, дубль попадает в warnings.
-    disabled-скилы остаются в .skills, но с enabled=False (для отображения в UI).
+    В .skills попадают ВСЕ найденные скилы источника (для UI); enabled=False у
+    тех, чьё имя не входит в `enabled`-список источника. exclude убирает скил
+    совсем (даже из UI).
     """
     res = ConfigResult()
     base = _load_doc(CONFIG, res.warnings)
-    local = _load_doc(CONFIG_LOCAL, res.warnings)
 
     if not base and not CONFIG.is_file():
         res.warnings.append(f"{CONFIG.name} не найден — скилы не линкуются")
         return res
-    if local:
-        res.warnings.append(f"применён overlay {CONFIG_LOCAL.name}")
-
-    res.disabled = set(base.get("disabled", [])) | set(local.get("disabled", []))
 
     seen: dict[str, Skill] = {}
-    for rel, entry in _merged_sources(base, local, res.warnings):
+    for rel, entry in _sources(base, res.warnings):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             res.warnings.append(
@@ -197,16 +209,18 @@ def load() -> ConfigResult:
                 f"git submodule update --init)")
             continue
 
-        include = entry.get("include", "*")
         exclude = set(entry.get("exclude", []))
         symlinks = _parse_symlinks(entry, rel, res.warnings)
         available = {p.name: p for p in root.iterdir() if is_skill(p)}
 
-        names = sorted(available) if include == "*" else list(include)
-        for n in names:
-            if n not in available:
+        spec = _enabled_spec(entry)
+        selected = _select_names(spec, list(available))
+        # Имена из `enabled`, которых нет в источнике — предупреждаем.
+        for n in spec:
+            if n != "*" and n not in available:
                 res.warnings.append(f"{rel}: скил '{n}' не найден (нет папки с SKILL.md)")
-                continue
+
+        for n in sorted(available):
             if n in exclude:
                 continue
             if n in seen:
@@ -216,7 +230,7 @@ def load() -> ConfigResult:
                 continue
             seen[n] = Skill(
                 name=n, path=available[n], source=rel,
-                enabled=n not in res.disabled,
+                enabled=n in selected,
                 description=_read_description(available[n] / "SKILL.md"),
                 symlinks=symlinks,
             )
@@ -228,18 +242,17 @@ def load() -> ConfigResult:
 
 
 def _discover_agents() -> tuple[list[Agent], list[str]]:
-    """Все агенты из [[agents]]-источников config.toml (+ overlay) и warnings.
+    """Все агенты из [[agents]]-источников config.toml и warnings.
 
     Зеркало skill-цикла в load(): источники в порядке config.toml, внутри —
     имена по алфавиту. Конфликт имён: первое вхождение, дубль → warnings
-    (как у скилов). Поштучного disable у агентов нет — все найденные линкуются.
+    (как у скилов). Линкуются только включённые `enabled`-списком.
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    local = _load_doc(CONFIG_LOCAL, warnings)
 
     seen: dict[str, Agent] = {}
-    for rel, entry in _merged_sources(base, local, warnings, key="agents"):
+    for rel, entry in _sources(base, warnings, key="agents"):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             warnings.append(
@@ -247,15 +260,16 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
                 f"git submodule update --init)")
             continue
 
-        include = entry.get("include", "*")
         exclude = set(entry.get("exclude", []))
         available = {p.stem: p for p in root.glob("*.md")}
 
-        names = sorted(available) if include == "*" else list(include)
-        for n in names:
-            if n not in available:
+        spec = _enabled_spec(entry)
+        selected = _select_names(spec, list(available))
+        for n in spec:
+            if n != "*" and n not in available:
                 warnings.append(f"{rel}: агент '{n}' не найден (нет {n}.md)")
-                continue
+
+        for n in sorted(selected):
             if n in exclude:
                 continue
             if n in seen:
@@ -274,50 +288,74 @@ def load_agents() -> list[Agent]:
     return agents
 
 
-# --- запись (toggle disabled) -------------------------------------------------
+# --- запись (toggle enabled) --------------------------------------------------
 
-_LOCAL_HEADER = (
-    "# config.local.toml — машино-/пользователь-специфичный overlay над config.toml.\n"
-    "# В .gitignore. `disabled` здесь объединяется с базовым; редактируется TUI\n"
-    "# (`uv run claude-agents manage`). Версионный config.toml TUI не трогает.\n\n"
-)
+def _write_enabled(source: str, spec: list[str]) -> None:
+    """Записать `enabled = spec` в [[skills]] с path=source в версионный config.toml.
 
-
-def set_disabled(name: str, disabled: bool) -> None:
-    """Добавить/убрать скил из `disabled` в config.local.toml (не в config.toml).
-
-    Версионный config.toml остаётся нетронутым — toggle пишет только в local
-    overlay (gitignored), его `disabled` объединяется с базовым при load().
-    Файл создаётся при первом toggle, существующие комментарии/[[skills]]
-    сохраняются (tomlkit).
-
-    disabled=True  → добавить имя в список (если ещё нет).
-    disabled=False → убрать имя из списка.
+    Правит существующую запись источника (она всегда есть — источники версионные);
+    комментарии и форматирование сохраняются (tomlkit). Если записи нет — создаёт.
     """
     import tomlkit
 
-    if CONFIG_LOCAL.is_file():
-        doc = tomlkit.parse(CONFIG_LOCAL.read_text())
+    doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
+
+    skills = doc.get("skills")
+    if skills is None:
+        skills = tomlkit.aot()
+        doc["skills"] = skills
+
+    target = None
+    for tbl in skills:
+        if tbl.get("path") == source:
+            target = tbl
+            break
+    if target is None:
+        target = tomlkit.table()
+        target["path"] = source
+        skills.append(target)
+
+    arr = tomlkit.array()
+    arr.multiline(False)
+    arr.extend(spec)
+    target["enabled"] = arr
+
+    CONFIG.write_text(tomlkit.dumps(doc))
+
+
+def set_skill_enabled(source: str, name: str, enabled: bool) -> None:
+    """Вкл/выкл скил `name` источника `source`, правя `enabled` в config.toml.
+
+    Берёт текущий разворот `enabled` источника, меняет членство `name`, пишет:
+      - если включены ВСЕ доступные скилы источника → enabled = ["*"];
+      - иначе → enabled = [отсортированный список включённых].
+    """
+    warnings: list[str] = []
+    entry: dict = {}
+    for rel, e in _sources(_load_doc(CONFIG, warnings), warnings):
+        if rel == source:
+            entry = e
+            break
+    root = (REPO_DIR / source).resolve()
+    available = sorted(p.name for p in root.iterdir() if is_skill(p)) if root.is_dir() else []
+
+    selected = _select_names(_enabled_spec(entry), available)
+    if enabled:
+        selected.add(name)
     else:
-        doc = tomlkit.parse(_LOCAL_HEADER)
+        selected.discard(name)
 
-    arr = doc.get("disabled")
-    if arr is None:
-        arr = tomlkit.array()
-        arr.multiline(False)
-        doc["disabled"] = arr
+    new_spec = ["*"] if selected >= set(available) and available else sorted(selected)
+    _write_enabled(source, new_spec)
 
-    current = list(arr)
-    if disabled and name not in current:
-        arr.append(name)
-    elif not disabled and name in current:
-        # tomlkit array: пересобираем без удаляемого имени.
-        for i, v in enumerate(list(arr)):
-            if v == name:
-                arr.pop(i)
-                break
 
-    CONFIG_LOCAL.write_text(tomlkit.dumps(doc))
+def set_source_enabled(source: str, enabled: bool) -> None:
+    """Вкл/выкл ВСЕ скилы источника `source` разом, правя config.toml.
+
+    enabled=True  → enabled = ["*"] (все);
+    enabled=False → enabled = []   (ни одного).
+    """
+    _write_enabled(source, ["*"] if enabled else [])
 
 
 def source_paths() -> set[str]:
@@ -327,13 +365,14 @@ def source_paths() -> set[str]:
     return {e["path"] for e in _entries(base, CONFIG.name, warnings, key="skills")}
 
 
-def add_source(rel_path: str, *, include="*", exclude: list[str] | None = None) -> bool:
+def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
     """Добавить [[skills]] с данным path в версионный config.toml (tomlkit).
 
-    Пишет в базовый config.toml, а не в overlay: добавление сабмодуля —
-    версионное изменение (как запись в .gitmodules). Комментарии/форматирование
+    Добавление сабмодуля — версионное изменение (как запись в .gitmodules), пишем
+    в config.toml. Комментарии/форматирование
     сохраняются. Дубль path игнорируется. Регистрирует источник скилов; источники
-    агентов ([[agents]]) добавляются в config.toml вручную.
+    агентов ([[agents]]) добавляются в config.toml вручную. Новый источник
+    включает все свои скилы (enabled = ["*"]).
 
     Возвращает True, если источник добавлен; False — если path уже есть.
     """
@@ -347,7 +386,7 @@ def add_source(rel_path: str, *, include="*", exclude: list[str] | None = None) 
     # что ломает выравнивание; текстовый append даёт ровно тот же стиль, что в base.
     block = ("\n[[skills]]\n"
              f'path = "{rel_path}"\n'
-             f"include = {tomlkit.item(include).as_string()}\n")
+             'enabled = ["*"]\n')
     if exclude:
         block += f"exclude = {tomlkit.item(exclude).as_string()}\n"
 

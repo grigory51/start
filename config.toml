@@ -7,9 +7,10 @@
 #
 #   path     — путь к папке-источнику относительно корня репо. Внутри неё каждый
 #              подкаталог с SKILL.md считается скилом.
-#   include  — какие скилы брать: "*" (все) либо список имён папок. По умолчанию "*".
-#   exclude  — какие скилы НЕ брать (имена папок). Применяется поверх include.
-#   enabled  — false выключает весь источник целиком.
+#   enabled  — какие скилы включить: ["*"] (все, по умолчанию), список имён папок
+#              (["a","c"]) либо [] (ни одного = источник выключен). TUI
+#              (`uv run claude-agents manage`) правит это поле прямо в этом файле.
+#   exclude  — какие скилы вообще не показывать (имена папок). Поверх enabled.
 #   symlinks — список [[skills.symlinks]] = {source, destination}: доп. symlink,
 #              добавляемый в КАЖДОЕ зеркало скила этого источника. source — путь
 #              относительно корня репо; destination — имя/путь внутри папки-зеркала
@@ -24,44 +25,29 @@
 # -----------------
 # Каждый источник агентов — отдельный [[agents]] (репо + сабмодули). path → папка
 # с *.md-агентами; имя файла без .md = имя агента в ~/.claude/agents. Поля
-# path/include/exclude — как у [[skills]] (include — имена без .md). Конфликт имён —
-# первое вхождение (как у скилов). Поштучного вкл/выкл у агентов нет: все линкуются.
-#
-# Выключенные скилы
-# -----------------
-# disabled — список имён скилов, которые не линковать (поштучно, поверх источников).
-# Здесь — базовые/версионные выключения. TUI (`uv run claude-agents manage`) в этот
-# файл НЕ пишет: toggle правит config.local.toml (gitignored), его disabled
-# объединяется с этим. Так состояние вкл/выкл из UI не пачкает версионный config.toml.
-#
-# Локальный overlay: config.local.toml (в .gitignore) переопределяет этот файл.
-#   - [[skills]]/[[agents]] с тем же path заменяет здешний (include/exclude из local);
-#   - новый path добавляется;
-#   - enabled = false выключает источник;
-#   - disabled из local объединяется с базовым.
-# Удобно, если на форке/машине нужны другие скилы без правки версионного файла.
-
-disabled = []
+# path/enabled/exclude — как у [[skills]] (enabled — имена без .md). Конфликт имён —
+# первое вхождение (как у скилов). У агентов нет TUI-toggle, но enabled-список тоже
+# действует: линкуются только включённые им.
 
 # --- Скилы --------------------------------------------------------------------
 
 # Локальные скилы репо.
 [[skills]]
 path = "skills"
-include = "*"
+enabled = ["*"]
 
 [[skills]]
 path = "contrib/blender-skills"
-include = "*"
+enabled = ["image-to-3d", "multi-image-to-3d", "threejs-export"]
 # exclude = ["threejs-export"]
 
 [[skills]]
 path = "contrib/infostyle-skill/skills"
-include = "*"
+enabled = ["*"]
 
 [[skills]]
 path = "contrib/claude-seo/skills"
-include = "*"
+enabled = ["*"]
   # scripts/ лежит на plugin-root рядом со skills/; скилы зовут python3 scripts/X.py
   # относительно своей папки — линкуем его в каждое зеркало seo-скила.
   [[skills.symlinks]]
@@ -73,8 +59,8 @@ include = "*"
 # Локальные агенты репо.
 [[agents]]
 path = "agents"
-include = "*"
+enabled = ["*"]
 
 [[agents]]
 path = "contrib/claude-seo/agents"
-include = "*"
+enabled = ["*"]

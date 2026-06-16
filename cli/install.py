@@ -7,7 +7,7 @@
   skills  — ~/.claude/skills это РЕАЛЬНАЯ папка; каждый скил <name>/ — тоже
             РЕАЛЬНАЯ папка-зеркало с per-file symlink'ами на записи верхнего
             уровня source-папки скила + доп. symlink'и из [[skills.symlinks]]
-            (напр. plugin-root scripts/). Источники и disabled — из config.toml.
+            (напр. plugin-root scripts/). Источники и enabled — из config.toml.
   hooks   — per-file symlink в ~/.claude/hooks/ (папку не трогаем: там лежат
             сторонние хуки не из репо).
 """

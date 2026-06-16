@@ -4,9 +4,9 @@
   Агенты  — агенты из [[agents]]-источников config.toml, сгруппированные по
             источнику (имя + описание). Enter открывает модалку с телом `.md`.
   Скилы   — список скилов: статус, имя, источник, описание. Enter открывает
-            модалку с `SKILL.md`. Space/`t` включает/выключает скил: правится
-            `disabled` в config.local.toml, затем дёргается install (без
-            обновления сабмодулей).
+            модалку с `SKILL.md`. Space/`t` включает/выключает скил (или весь
+            источник, если курсор на заголовке): правится `enabled`-список
+            источника в config.toml, затем дёргается install (без сабмодулей).
 
 Запуск: `uv run claude-agents manage`.
 """
@@ -154,8 +154,9 @@ class SkillsPane(TabPane):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        # Параллельно строкам таблицы: Skill или None для строк-разделителей.
-        self._row_map: list[config.Skill | None] = []
+        # Параллельно строкам таблицы: Skill — строка-скил; str — строка-заголовок
+        # источника (хранит его path, чтобы space по заголовку toggle'ил весь источник).
+        self._row_map: list[config.Skill | str] = []
 
     def compose(self) -> ComposeResult:
         yield DataTable(id="skills-table", cursor_type="row", zebra_stripes=True)
@@ -169,7 +170,8 @@ class SkillsPane(TabPane):
         self._reload()
         table.focus()
 
-    def _skill_at_cursor(self) -> config.Skill | None:
+    def _at_cursor(self) -> config.Skill | str | None:
+        """Объект под курсором: Skill (строка-скил), str (заголовок источника) или None."""
         table = self.query_one("#skills-table", DataTable)
         row = table.cursor_row
         if row is None or row >= len(self._row_map):
@@ -183,12 +185,20 @@ class SkillsPane(TabPane):
         cfg = config.load()
         self._row_map = []
 
+        # Сгруппировано по источнику; для заголовка считаем, все ли скилы вкл.
+        by_source: dict[str, list[config.Skill]] = {}
+        for s in cfg.skills:
+            by_source.setdefault(s.source, []).append(s)
+
         last_source: str | None = None
         for s in cfg.skills:
             if s.source != last_source:
-                # Заголовок-разделитель группы источника.
-                table.add_row("", f"[b]{s.source}[/]", "", height=1)
-                self._row_map.append(None)
+                # Заголовок-разделитель группы источника. Маркер ◉/◐/○ — все/часть/ни одного.
+                group = by_source[s.source]
+                on = sum(g.enabled for g in group)
+                head = "[green]◉[/]" if on == len(group) else ("○" if on == 0 else "[yellow]◐[/]")
+                table.add_row(head, f"[b]{s.source}[/]", "", height=1)
+                self._row_map.append(s.source)
                 last_source = s.source
             mark = "[green]●[/]" if s.enabled else "[dim]○[/]"
             name = f"  {s.name}" if s.enabled else f"  [dim]{s.name}[/]"
@@ -196,21 +206,10 @@ class SkillsPane(TabPane):
             self._row_map.append(s)
 
         if self._row_map:
-            row = min(prev, len(self._row_map) - 1)
-            table.move_cursor(row=self._nearest_skill_row(row))
+            # Курсор на той же строке (toggle не меняет число строк); без снапа.
+            table.move_cursor(row=min(prev, len(self._row_map) - 1))
         if cfg.warnings:
             self._status("⚠ " + "; ".join(cfg.warnings[:3]), warn=True)
-
-    def _nearest_skill_row(self, row: int) -> int:
-        """Ближайшая строка-скил (не разделитель), начиная с row и вниз/вверх."""
-        n = len(self._row_map)
-        for r in range(row, n):
-            if self._row_map[r] is not None:
-                return r
-        for r in range(row - 1, -1, -1):
-            if self._row_map[r] is not None:
-                return r
-        return row
 
     def _status(self, msg: str, *, warn: bool = False) -> None:
         st = self.query_one("#skills-status", Static)
@@ -222,30 +221,42 @@ class SkillsPane(TabPane):
         if row is None or row >= len(self._row_map):
             return
         s = self._row_map[row]
-        if s is None:  # строка-разделитель
+        if not isinstance(s, config.Skill):  # заголовок источника
             return
         self.app.push_screen(ContentScreen(s.name, s.path / "SKILL.md"))
 
     def action_toggle(self) -> None:
-        skill = self._skill_at_cursor()
-        if skill is None:
-            return
+        target = self._at_cursor()
+        if isinstance(target, str):  # заголовок источника → toggle всему содержимому
+            self._toggle_source(target)
+        elif isinstance(target, config.Skill):
+            self._toggle_skill(target)
+
+    def _toggle_skill(self, skill: config.Skill) -> None:
         new_enabled = not skill.enabled
+        # config.toml: правим `enabled`-список источника
+        config.set_skill_enabled(skill.source, skill.name, enabled=new_enabled)
+        verb = "включён" if new_enabled else "выключен"
+        self._apply_and_report(f"{skill.name} {verb}")
 
-        # 1. config.local.toml: добавить/убрать из disabled (версионный не трогаем)
-        config.set_disabled(skill.name, disabled=not new_enabled)
+    def _toggle_source(self, source: str) -> None:
+        # Все вкл → выключить весь источник; иначе (часть/ни одного) → включить все.
+        cfg = config.load()
+        group = [s for s in cfg.skills if s.source == source]
+        new_enabled = not (group and all(s.enabled for s in group))
+        config.set_source_enabled(source, enabled=new_enabled)
+        verb = "включён" if new_enabled else "выключен"
+        self._apply_and_report(f"источник {source} {verb} ({len(group)} скилов)")
 
-        # 2. install (без сабмодулей), вывод глушим в буфер
+    def _apply_and_report(self, what: str) -> None:
+        """install (без сабмодулей) + статус + перерисовка."""
         buf = io.StringIO()
         with redirect_stdout(buf):
             errors = run_up(skip_submodules=True, quiet=True)
-
-        verb = "включён" if new_enabled else "выключен"
         if errors:
-            self._status(f"{skill.name} {verb}, но install с предупреждениями ({errors})",
-                         warn=True)
+            self._status(f"{what}, но install с предупреждениями ({errors})", warn=True)
         else:
-            self._status(f"{skill.name} {verb} ✓ symlink'и обновлены")
+            self._status(f"{what} ✓ symlink'и обновлены")
         self._reload()
 
     def action_add_submodule(self) -> None:
