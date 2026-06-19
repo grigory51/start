@@ -100,15 +100,33 @@ function main() {
   const model = d?.model?.display_name;
   if (model) parts.push(`${C.bold}${C.cyan}${model}${C.reset}`);
 
-  // Лимиты использования.
+  // Лимиты использования. Цвет — по PACE (темпу относительно равномерного расхода
+  // к текущему моменту окна), а не по абсолютному used%. ratio = used% / expected%,
+  // где expected% = доля прошедшего времени окна. ratio<1 зелёный (отстаёшь/экономишь),
+  // ≈1 жёлтый (ровно по графику), >1 краснее (ближе к перерасходу). Число показываем used%.
+  const FIVE_H = 5 * 3600 * 1000;
+  const SEVEN_D = 7 * 86400 * 1000;
   const rl = d?.rate_limits ?? {};
-  const limit = (lim, label) => {
+  const limit = (lim, label, windowMs) => {
     if (!lim || lim.used_percentage == null) return null;
+    const used = Math.round(lim.used_percentage);
     const reset = untilReset(lim.resets_at);
     const tag = reset ? `${label}(${reset})` : label;
-    return `${C.dim}${tag}: ${C.reset}${pct(lim.used_percentage)}`;
+    // pace: доля прошедшего времени окна → ожидаемый равномерный расход.
+    let color;
+    if (lim.resets_at) {
+      const remaining = lim.resets_at * 1000 - Date.now();
+      const elapsedFrac = Math.max(0, Math.min(1, (windowMs - remaining) / windowMs));
+      const expected = elapsedFrac * 100;
+      // В самом начале окна (expected≈0) не вспыхиваем красным: считаем pace по факту.
+      const ratio = expected >= 1 ? lim.used_percentage / expected : (used > 0 ? 2 : 0);
+      color = heat(Math.max(0, Math.min(100, ratio * 50)));  // ratio 0→зел,1→жёлт,2→красн
+    } else {
+      color = heat(used);  // нет resets_at → fallback на абсолютный
+    }
+    return `${C.dim}${tag}: ${C.reset}${color}${used}%${C.reset}`;
   };
-  const lims = [limit(rl.five_hour, "5h"), limit(rl.seven_day, "7d")].filter(Boolean);
+  const lims = [limit(rl.five_hour, "5h", FIVE_H), limit(rl.seven_day, "7d", SEVEN_D)].filter(Boolean);
   if (lims.length) parts.push(lims.join(" "));
 
   // Сессия.
