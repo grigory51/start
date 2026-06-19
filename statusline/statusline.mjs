@@ -23,10 +23,20 @@ const C = {
   bold: "\x1b[1m",
   dim: "\x1b[2m",
   cyan: "\x1b[36m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  red: "\x1b[31m",
+  green: "\x1b[38;2;0;255;0m",     // чистый зелёный (как края heat-шкалы)
+  yellow: "\x1b[38;2;255;255;0m",  // чистый жёлтый
+  red: "\x1b[38;2;255;0;0m",       // чистый красный
+  blink: "\x1b[5m",
 };
+
+// Цвет лимита по pace-ratio (used% / ожидаемый равномерный расход), дискретно:
+//   ≤0.70 зелёный · ≤0.90 жёлтый · ≤1.0 красный · >1.0 красный+мигание (перерасход).
+function paceColor(ratio) {
+  if (ratio <= 0.70) return C.green;
+  if (ratio <= 0.90) return C.yellow;
+  if (ratio <= 1.0) return C.red;
+  return C.blink + C.red;
+}
 const sep = `${C.dim} | ${C.reset}`;
 
 // Плавный цвет-«термометр» по заполнению 0..100: зелёный → жёлтый → красный.
@@ -113,18 +123,24 @@ function main() {
     const reset = untilReset(lim.resets_at);
     const tag = reset ? `${label}(${reset})` : label;
     // pace: доля прошедшего времени окна → ожидаемый равномерный расход.
-    let color;
+    // Цвет — по ratio (used%/expected%). Рядом с used% — запас в пунктах квоты:
+    // slack = expected% − used%. «+» = ниже графика (можно ещё столько потратить),
+    // «−» = перерасход относительно графика. Нагляднее ratio, т.к. в скобках tag
+    // показан остаток до сброса, а не прошедшее время.
+    let color, slack = null;
     if (lim.resets_at) {
       const remaining = lim.resets_at * 1000 - Date.now();
       const elapsedFrac = Math.max(0, Math.min(1, (windowMs - remaining) / windowMs));
       const expected = elapsedFrac * 100;
       // В самом начале окна (expected≈0) не вспыхиваем красным: считаем pace по факту.
       const ratio = expected >= 1 ? lim.used_percentage / expected : (used > 0 ? 2 : 0);
-      color = heat(Math.max(0, Math.min(100, ratio * 50)));  // ratio 0→зел,1→жёлт,2→красн
+      color = paceColor(ratio);  // ≤.70 зел · ≤.90 жёлт · ≤1 красн · >1 мигание
+      slack = expected - lim.used_percentage;
     } else {
-      color = heat(used);  // нет resets_at → fallback на абсолютный
+      color = paceColor(used / 100);  // нет resets_at → по абсолютной доле
     }
-    return `${C.dim}${tag}: ${C.reset}${color}${used}%${C.reset}`;
+    const pace = slack != null ? ` ${C.dim}${slack >= 0 ? "+" : "−"}${Math.round(Math.abs(slack))}%${C.reset}` : "";
+    return `${C.dim}${tag}: ${C.reset}${color}${used}%${C.reset}${pace}`;
   };
   const lims = [limit(rl.five_hour, "5h", FIVE_H), limit(rl.seven_day, "7d", SEVEN_D)].filter(Boolean);
   if (lims.length) parts.push(lims.join(" "));
