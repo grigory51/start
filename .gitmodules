@@ -9,7 +9,7 @@
 	url = https://github.com/AgriciDaniel/claude-seo
 [submodule "contrib/caveman"]
 	path = contrib/caveman
-	url = https://github.com/JuliusBrussee/caveman
+	url = git@github.com:grigory51/caveman.git
 [submodule "contrib/ast-index"]
 	path = contrib/ast-index
 	url = https://github.com/defendend/Claude-ast-index-search
