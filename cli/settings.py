@@ -38,7 +38,8 @@ def _empty_sidecar() -> dict:
     return {
         "enabledPlugins": [],         # ["plugin@mp", ...]
         "extraKnownMarketplaces": [],  # ["mp", ...]
-        "mcpServers": [],             # ["name", ...]
+        "mcpServers": [],             # legacy: наши MCP в settings.json (мёртвый ключ, чистим)
+        "claudeJsonMcpServers": [],   # ["name", ...] — наши MCP в ~/.claude.json (user-scope)
         "hookCommands": [],           # ["bash \"...notify.sh\"", ...] — сигнатуры наших hook-команд
         "env": [],                    # ["CLAUDE_CODE_PLUGIN_SEED_DIR"]
         "statusLine": False,          # владеем ли мы settings.statusLine
@@ -67,8 +68,8 @@ def build_fragment(plugins: list[config.Plugin]) -> dict:
 
     enabledPlugins/extraKnownMarketplaces — по [[plugins]] (включённые true, выключенные
     false; extraKnownMarketplaces по marketplace включённых). env.SEED_DIR на наш .seed.
-    mcpServers — из inline [[mcp]]. hooks — из [[hooks]] (script→events). source-файловые
-    [[mcp]] здесь не материализуются (их симлинкает install-слой при наличии).
+    hooks — из [[hooks]] (script→events). MCP сюда НЕ входят — user-scope MCP пишутся в
+    ~/.claude.json (см. cli/claudejson.py), т.к. CC не читает mcpServers из settings.json.
     """
     enabled_plugins: dict[str, bool] = {}
     marketplaces: dict[str, dict] = {}
@@ -79,19 +80,12 @@ def build_fragment(plugins: list[config.Plugin]) -> dict:
                 "source": {"source": "directory", "path": str(p.path)}
             }
 
-    mcp_servers: dict[str, dict] = {}
-    mcp, _ = config.load_mcp()
-    for m in mcp:
-        if m.enabled and m.server:
-            mcp_servers[m.name] = m.server
-
     hooks = _build_hooks_fragment()
 
     frag = {
         "enabledPlugins": enabled_plugins,
         "extraKnownMarketplaces": marketplaces,
         "env": {SEED_ENV_KEY: str(SEED_DIR)},
-        "mcpServers": mcp_servers,
         "hooks": hooks,
     }
     sl = config.load_statusline()
@@ -189,8 +183,9 @@ def merge_into_settings(plugins: list[config.Plugin], *, dry_run: bool = False) 
         "enabledPlugins", frag["enabledPlugins"], prev["enabledPlugins"])
     new_sidecar["extraKnownMarketplaces"] = merge_dict(
         "extraKnownMarketplaces", frag["extraKnownMarketplaces"], prev["extraKnownMarketplaces"])
-    new_sidecar["mcpServers"] = merge_dict(
-        "mcpServers", frag["mcpServers"], prev["mcpServers"])
+    # Legacy: ранее MCP ошибочно писались в settings.json mcpServers (CC их не читает).
+    # frag без mcpServers → merge_dict с {} вычистит наши прошлые settings-записи.
+    new_sidecar["mcpServers"] = merge_dict("mcpServers", {}, prev["mcpServers"])
 
     # --- env (вложенный dict, единственный наш ключ — SEED_DIR) ---
     env_node = cur.get("env") if isinstance(cur.get("env"), dict) else {}
@@ -254,6 +249,11 @@ def merge_into_settings(plugins: list[config.Plugin], *, dry_run: bool = False) 
         del cur["hooks"]
     new_sidecar["hookCommands"] = new_sigs
 
+    # --- user-scope MCP → ~/.claude.json (CC не читает MCP из settings.json) ---
+    from . import claudejson
+    mcp_errors, mcp_owned = claudejson.merge_mcp(prev["claudeJsonMcpServers"], dry_run=dry_run)
+    new_sidecar["claudeJsonMcpServers"] = mcp_owned
+
     # Sidecar мог устареть, даже если в settings нечего менять: напр. CC сам записал
     # enabledPlugins/extraKnownMarketplaces при `plugin install` (значения совпали с
     # фрагментом → changes пуст), но владение этими ключами ещё не зафиксировано.
@@ -264,7 +264,7 @@ def merge_into_settings(plugins: list[config.Plugin], *, dry_run: bool = False) 
     if not changes and not sidecar_drift:
         print("Settings -> без изменений.")
         print()
-        return 0
+        return mcp_errors
 
     print(f"Settings -> {SETTINGS}")
     for c in sorted(set(changes)):
@@ -274,7 +274,7 @@ def merge_into_settings(plugins: list[config.Plugin], *, dry_run: bool = False) 
     if dry_run:
         print("  [dry-run] settings.json не изменён")
         print()
-        return 0
+        return mcp_errors
 
     if changes and SETTINGS.is_file():
         SETTINGS.with_suffix(".json.bak").write_text(SETTINGS.read_text())
@@ -284,7 +284,7 @@ def merge_into_settings(plugins: list[config.Plugin], *, dry_run: bool = False) 
     tail = f"записано ({len(set(changes))} изм.), бэкап settings.json.bak, " if changes else ""
     print(f"  {tail}sidecar обновлён.")
     print()
-    return 0
+    return mcp_errors
 
 
 def remove_managed(*, dry_run: bool = False) -> int:
@@ -331,21 +331,27 @@ def remove_managed(*, dry_run: bool = False) -> int:
         if not hooks_node:
             cur.pop("hooks", None)
 
-    if not removed:
+    # user-scope MCP в ~/.claude.json (отдельный файл; печатает свои строки сам).
+    mcp_keys = prev.get("claudeJsonMcpServers", [])
+
+    if not removed and not mcp_keys:
         print("Settings --remove: нечего удалять.")
         return 0
 
     print("Settings --remove:")
     for r in removed:
         print(f"  -{r}")
+    from . import claudejson
+    claudejson.remove_mcp(mcp_keys, dry_run=dry_run)
     if dry_run:
         print("  [dry-run] не изменено")
         return 0
 
-    if SETTINGS.is_file():
-        SETTINGS.with_suffix(".json.bak").write_text(SETTINGS.read_text())
-    SETTINGS.write_text(json.dumps(cur, indent=2, ensure_ascii=False) + "\n")
+    if removed:
+        if SETTINGS.is_file():
+            SETTINGS.with_suffix(".json.bak").write_text(SETTINGS.read_text())
+        SETTINGS.write_text(json.dumps(cur, indent=2, ensure_ascii=False) + "\n")
     if SIDECAR.is_file():
         SIDECAR.unlink()
-    print(f"  удалено {len(removed)}, sidecar очищен.")
+    print("  sidecar очищен.")
     return 0

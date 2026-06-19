@@ -19,6 +19,9 @@ from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 CONFIG = REPO_DIR / "config.toml"
+# Локальный overlay (gitignore): машино-специфичные переопределения `enabled`.
+# Структура: [local.<section>] <key> = <enabled>. См. _load_local / _effective_*.
+CONFIG_LOCAL = REPO_DIR / "config.local.toml"
 
 
 # --- модель -------------------------------------------------------------------
@@ -29,12 +32,14 @@ class Skill:
     name: str
     path: Path
     source: str          # path источника из config.toml
-    enabled: bool        # имя есть в `enabled`-списке источника
+    enabled: bool        # эффективный: имя в enabled-спеке (с учётом local overlay)
     description: str = ""
     # Доп. symlink'и из [[skills.symlinks]] источника: [{source, destination}].
     # source — путь относительно корня репо; destination — имя/путь внутри
     # папки-зеркала скила. Применяются к каждому скилу источника.
     symlinks: list[dict] = field(default_factory=list)
+    # True, если у источника этого скила есть запись в config.local.toml ([local.skills]).
+    source_has_local: bool = False
 
 
 @dataclass
@@ -66,6 +71,9 @@ class Plugin:
     # Внешние зависимости из [[plugins.requirements]]: [{name, check, hint}].
     # check — shell-команда проверки наличия (rc 0 = есть); hint — как поставить.
     requirements: list[dict] = field(default_factory=list)
+    # Состояние для TUI: base — из config.toml; local — из config.local.toml (None = нет).
+    enabled_base: bool = True
+    enabled_local: bool | None = None
 
     @property
     def ref(self) -> str:
@@ -84,15 +92,17 @@ class Command:
 
 @dataclass
 class McpServer:
-    """MCP-сервер из [[mcp]].
+    """MCP-сервер из [[mcp]] (user-scope: пишется в ~/.claude.json mcpServers).
 
-    Два режима доставки: file (symlink готового .mcp.json) или inline-спека
-    (пишется в mcpServers фрагмента settings). enabled — bool.
+    inline-спека [mcp.server] (command/args/env | url/headers). enabled — bool
+    (с учётом local overlay). enabled_base/enabled_local — для TUI (local/global).
     """
     name: str
     enabled: bool
-    source: str = ""           # rel-path .mcp.json (режим file), либо ""
+    source: str = ""           # rel-path .mcp.json (режим file, зарезервировано), либо ""
     server: dict | None = None  # inline-спека {command,args,env|url,headers}
+    enabled_base: bool = True
+    enabled_local: bool | None = None
 
 
 @dataclass
@@ -204,6 +214,31 @@ def _enabled_spec(entry: dict) -> list[str]:
     return ["*"]
 
 
+def _load_local(warnings: list[str]) -> dict:
+    """Секция [local] из config.local.toml ({} если файла нет).
+
+    Формат: [local.<section>] <key> = <enabled>. section ∈ skills/agents/commands/
+    plugins/mcp. key — path источника (или name для mcp). Только переопределяет enabled.
+    """
+    doc = _load_doc(CONFIG_LOCAL, warnings)
+    local = doc.get("local", {})
+    return local if isinstance(local, dict) else {}
+
+
+def _effective_spec(lsec: dict, key: str, base_entry: dict) -> list[str]:
+    """Эффективный enabled-spec: overlay если ключ есть в lsec, иначе base_entry."""
+    if key in lsec:
+        return _enabled_spec({"enabled": lsec[key]})
+    return _enabled_spec(base_entry)
+
+
+def _effective_bool(lsec: dict, key: str, base_entry: dict) -> bool:
+    """Эффективный enabled-bool: overlay если ключ есть в lsec, иначе base_entry."""
+    if key in lsec:
+        return _bool_enabled({"enabled": lsec[key]})
+    return _bool_enabled(base_entry)
+
+
 def _select_names(spec: list[str], available: list[str]) -> set[str]:
     """Какие скилы источника включены: разворачивает "*" в все доступные имена."""
     if "*" in spec:
@@ -244,6 +279,7 @@ def load() -> ConfigResult:
     """
     res = ConfigResult()
     base = _load_doc(CONFIG, res.warnings)
+    lsec = _load_local(res.warnings).get("skills", {})
 
     if not base and not CONFIG.is_file():
         res.warnings.append(f"{CONFIG.name} не найден — скилы не линкуются")
@@ -262,7 +298,8 @@ def load() -> ConfigResult:
         symlinks = _parse_symlinks(entry, rel, res.warnings)
         available = {p.name: p for p in root.iterdir() if is_skill(p)}
 
-        spec = _enabled_spec(entry)
+        spec = _effective_spec(lsec, rel, entry)
+        has_local = rel in lsec
         selected = _select_names(spec, list(available))
         # Имена из `enabled`, которых нет в источнике — предупреждаем.
         for n in spec:
@@ -282,6 +319,7 @@ def load() -> ConfigResult:
                 enabled=n in selected,
                 description=_read_description(available[n] / "SKILL.md"),
                 symlinks=symlinks,
+                source_has_local=has_local,
             )
 
     # Порядок: источники в порядке config.toml, внутри — имена по алфавиту
@@ -299,6 +337,7 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    lsec = _load_local(warnings).get("agents", {})
 
     seen: dict[str, Agent] = {}
     for rel, entry in _sources(base, warnings, key="agents"):
@@ -312,7 +351,7 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
         exclude = set(entry.get("exclude", []))
         available = {p.stem: p for p in root.glob("*.md")}
 
-        spec = _enabled_spec(entry)
+        spec = _effective_spec(lsec, rel, entry)
         selected = _select_names(spec, list(available))
         for n in spec:
             if n != "*" and n not in available:
@@ -440,6 +479,7 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    lsec = _load_local(warnings).get("plugins", {})
 
     seen: dict[str, Plugin] = {}
     for rel, entry in _sources(base, warnings, key="plugins"):
@@ -467,10 +507,12 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
         seen[ref] = Plugin(
             name=root.name, path=root, source=rel,
             marketplace=mp_name, plugin=plugin_name,
-            enabled=_bool_enabled(entry),
+            enabled=_effective_bool(lsec, rel, entry),
             description=_read_description(root / ".claude-plugin" / "plugin.json"),
             session_start_hooks=ss_hooks,
             requirements=_parse_requirements(entry, rel, warnings),
+            enabled_base=_bool_enabled(entry),
+            enabled_local=(_bool_enabled({"enabled": lsec[rel]}) if rel in lsec else None),
         )
     return list(seen.values()), warnings
 
@@ -487,6 +529,7 @@ def _discover_commands() -> tuple[list[Command], list[str]]:
     """Все команды из [[commands]]-источников. Зеркало _discover_agents (*.md)."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    lsec = _load_local(warnings).get("commands", {})
 
     seen: dict[str, Command] = {}
     for rel, entry in _sources(base, warnings, key="commands"):
@@ -497,7 +540,7 @@ def _discover_commands() -> tuple[list[Command], list[str]]:
 
         exclude = set(entry.get("exclude", []))
         available = {p.stem: p for p in root.glob("*.md")}
-        spec = _enabled_spec(entry)
+        spec = _effective_spec(lsec, rel, entry)
         selected = _select_names(spec, list(available))
         for n in spec:
             if n != "*" and n not in available:
@@ -552,6 +595,7 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    lsec = _load_local(warnings).get("mcp", {})
 
     seen: dict[str, McpServer] = {}
     for entry in base.get("mcp", []):
@@ -565,10 +609,16 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
         server = entry.get("server")
         seen[name] = McpServer(
             name=name,
-            enabled=_bool_enabled(entry),
+            enabled=_effective_bool(lsec, name, entry),
             source=(entry.get("source") or "").strip(),
             server=server if isinstance(server, dict) else None,
+            enabled_base=_bool_enabled(entry),
+            enabled_local=(_bool_enabled({"enabled": lsec[name]}) if name in lsec else None),
         )
+    # Локальные ключи без base-источника — overlay не определяет источники.
+    for n in lsec:
+        if n not in seen:
+            warnings.append(f"config.local.toml [local.mcp]: '{n}' нет в config.toml — игнор")
     return list(seen.values()), warnings
 
 
@@ -735,3 +785,95 @@ def set_plugin_enabled(source: str, enabled: bool) -> None:
 
     target["enabled"] = enabled
     CONFIG.write_text(tomlkit.dumps(doc))
+
+
+def set_mcp_enabled(name: str, enabled: bool) -> None:
+    """Вкл/выкл MCP `name` глобально, правя `enabled` в [[mcp]] config.toml (по name)."""
+    import tomlkit
+
+    doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
+    mcp = doc.get("mcp")
+    if mcp is None:
+        mcp = tomlkit.aot()
+        doc["mcp"] = mcp
+    target = None
+    for tbl in mcp:
+        if tbl.get("name") == name:
+            target = tbl
+            break
+    if target is None:
+        target = tomlkit.table()
+        target["name"] = name
+        mcp.append(target)
+    target["enabled"] = enabled
+    CONFIG.write_text(tomlkit.dumps(doc))
+
+
+# --- запись (локальный overlay config.local.toml) -----------------------------
+
+def _write_local(section: str, key: str, value) -> None:
+    """Записать [local.<section>] <key> = value в config.local.toml (tomlkit).
+
+    value — bool (plugins/mcp) или list[str] (skills/agents/commands). Создаёт файл и
+    таблицы при необходимости. Комментарии/форматирование сохраняются.
+    """
+    import tomlkit
+
+    doc = tomlkit.parse(CONFIG_LOCAL.read_text()) if CONFIG_LOCAL.is_file() else tomlkit.document()
+    local = doc.get("local")
+    if local is None:
+        local = tomlkit.table()
+        doc["local"] = local
+    sect = local.get(section)
+    if sect is None:
+        sect = tomlkit.table()
+        local[section] = sect
+
+    if isinstance(value, list):
+        arr = tomlkit.array()
+        arr.multiline(False)
+        arr.extend(value)
+        sect[key] = arr
+    else:
+        sect[key] = value
+    CONFIG_LOCAL.write_text(tomlkit.dumps(doc))
+
+
+def set_plugin_enabled_local(source: str, enabled: bool) -> None:
+    """Локально (config.local.toml) вкл/выкл плагин-источник по path."""
+    _write_local("plugins", source, enabled)
+
+
+def set_mcp_enabled_local(name: str, enabled: bool) -> None:
+    """Локально (config.local.toml) вкл/выкл MCP по name."""
+    _write_local("mcp", name, enabled)
+
+
+def set_source_enabled_local(source: str, enabled: bool) -> None:
+    """Локально вкл/выкл ВСЕ скилы источника: ["*"] / []."""
+    _write_local("skills", source, ["*"] if enabled else [])
+
+
+def set_skill_enabled_local(source: str, name: str, enabled: bool) -> None:
+    """Локально вкл/выкл скил `name` источника: правит [local.skills][source] spec.
+
+    Берёт эффективный набор включённых скилов источника (с учётом текущего overlay),
+    меняет членство name, пишет ["*"] если включены все доступные, иначе список.
+    """
+    warnings: list[str] = []
+    entry: dict = {}
+    for rel, e in _sources(_load_doc(CONFIG, warnings), warnings):
+        if rel == source:
+            entry = e
+            break
+    root = (REPO_DIR / source).resolve()
+    available = sorted(p.name for p in root.iterdir() if is_skill(p)) if root.is_dir() else []
+
+    lsec = _load_local(warnings).get("skills", {})
+    selected = _select_names(_effective_spec(lsec, source, entry), available)
+    if enabled:
+        selected.add(name)
+    else:
+        selected.discard(name)
+    new_spec = ["*"] if selected >= set(available) and available else sorted(selected)
+    _write_local("skills", source, new_spec)

@@ -42,18 +42,24 @@ class ContentScreen(ModalScreen):
         Binding("escape,q,enter", "dismiss", "Закрыть", show=True),
     ]
 
-    def __init__(self, title: str, path: Path) -> None:
+    def __init__(self, title: str, path: Path | None = None, *, text: str | None = None) -> None:
         super().__init__()
         self._title = title
         self._path = path
+        self._text = text  # альтернатива path: показать готовый текст (напр. JSON-спека MCP)
 
     def compose(self) -> ComposeResult:
-        try:
-            text = self._path.read_text(errors="replace")
-        except OSError as e:
-            text = f"# {self._title}\n\nНе удалось прочитать `{self._path}`:\n\n```\n{e}\n```"
+        if self._text is not None:
+            text = self._text
+            subtitle = ""
+        else:
+            try:
+                text = self._path.read_text(errors="replace")
+            except OSError as e:
+                text = f"# {self._title}\n\nНе удалось прочитать `{self._path}`:\n\n```\n{e}\n```"
+            subtitle = str(self._path)
         with Container(id="modal-box"):
-            yield Static(f"[b]{self._title}[/]  [dim]{self._path}[/]", id="modal-title")
+            yield Static(f"[b]{self._title}[/]  [dim]{subtitle}[/]", id="modal-title")
             with VerticalScroll(id="modal-scroll"):
                 yield Markdown(text)
             yield Static("[dim]Esc / q / Enter — закрыть · ↑↓ PgUp/PgDn — скролл[/]",
@@ -147,12 +153,14 @@ class AgentsPane(TabPane):
 class PluginsPane(TabPane):
     """Просмотр + toggle нативных CC-плагинов ([[plugins]]).
 
-    Space/`t` включает/выключает плагин (правит config.toml + пересобирает seed +
-    мержит settings). Enter открывает plugin.json. Флаг ⚠ — есть SessionStart-хуки.
+    `t`/Space — toggle ЛОКАЛЬНО (config.local.toml, эта машина); `g` — ГЛОБАЛЬНО
+    (config.toml, для всех машин). Оба пересобирают seed + мержат settings. Enter
+    открывает plugin.json. ⚠ — SessionStart-хуки. [L] — есть локальный оверрайд.
     """
 
     BINDINGS = [
-        Binding("space,t", "toggle", "Вкл/выкл", show=True),
+        Binding("space,t", "toggle_local", "Вкл/выкл (локально)", show=True),
+        Binding("g", "toggle_global", "Вкл/выкл (глобально)", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -180,6 +188,8 @@ class PluginsPane(TabPane):
         for p in plugins:
             mark = "[green]●[/]" if p.enabled else "[dim]○[/]"
             ref = p.ref if p.enabled else f"[dim]{p.ref}[/]"
+            if p.enabled_local is not None:
+                ref += " [cyan][L][/]"  # локальный оверрайд (config.local.toml)
             warn = "[yellow]⚠[/]" if p.session_start_hooks else ""
             table.add_row(mark, ref, warn, _truncate(p.description, 70))
             self._row_map.append(p)
@@ -204,16 +214,26 @@ class PluginsPane(TabPane):
         if p is not None:
             self.app.push_screen(ContentScreen(p.ref, p.path / ".claude-plugin" / "plugin.json"))
 
-    def action_toggle(self) -> None:
+    def action_toggle_local(self) -> None:
         p = self._at_cursor()
         if p is None:
             return
         new_enabled = not p.enabled
+        config.set_plugin_enabled_local(p.source, enabled=new_enabled)
+        verb = "включён" if new_enabled else "выключен"
+        self._status(f"{p.ref} {verb} локально — пересобираю seed…")
+        self._rebuild_worker(f"{p.ref} {verb} (локально)")
+
+    def action_toggle_global(self) -> None:
+        p = self._at_cursor()
+        if p is None:
+            return
+        new_enabled = not p.enabled_base
         config.set_plugin_enabled(p.source, enabled=new_enabled)
         verb = "включён" if new_enabled else "выключен"
-        self._status(f"{p.ref} {verb} — пересобираю seed…")
-        # Seed build сетевой/долгий (claude CLI) — в thread-воркере.
-        self._rebuild_worker(f"{p.ref} {verb}")
+        masked = " (но локальный оверрайд активен)" if p.enabled_local is not None else ""
+        self._status(f"{p.ref} {verb} глобально{masked} — пересобираю seed…")
+        self._rebuild_worker(f"{p.ref} {verb} (глобально){masked}")
 
     @work(thread=True, exclusive=True)
     def _rebuild_worker(self, what: str) -> None:
@@ -232,11 +252,116 @@ class PluginsPane(TabPane):
         self._reload()
 
 
+class McpPane(TabPane):
+    """Просмотр + toggle MCP-серверов ([[mcp]] → ~/.claude.json user-scope).
+
+    `t`/Space — toggle ЛОКАЛЬНО (config.local.toml); `g` — ГЛОБАЛЬНО (config.toml).
+    Оба мержат ~/.claude.json. Enter показывает JSON-спеку сервера. [L] — локальный оверрайд.
+    """
+
+    BINDINGS = [
+        Binding("space,t", "toggle_local", "Вкл/выкл (локально)", show=True),
+        Binding("g", "toggle_global", "Вкл/выкл (глобально)", show=True),
+    ]
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._row_map: list[config.McpServer] = []
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="mcp-table", cursor_type="row", zebra_stripes=True)
+        yield Static("", id="mcp-status")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#mcp-table", DataTable)
+        table.add_column("◉", width=3)
+        table.add_column("MCP", width=28)
+        table.add_column("Команда / URL")
+        self._reload()
+
+    def _reload(self) -> None:
+        table = self.query_one("#mcp-table", DataTable)
+        prev = table.cursor_row
+        table.clear()
+        self._row_map = []
+        mcp, _ = config.load_mcp()
+        for m in mcp:
+            mark = "[green]●[/]" if m.enabled else "[dim]○[/]"
+            name = m.name if m.enabled else f"[dim]{m.name}[/]"
+            if m.enabled_local is not None:
+                name += " [cyan][L][/]"
+            srv = m.server or {}
+            desc = srv.get("command", "") and (srv["command"] + " " + " ".join(srv.get("args", [])))
+            desc = desc or srv.get("url", "")
+            table.add_row(mark, name, _truncate(desc, 60))
+            self._row_map.append(m)
+        if self._row_map:
+            table.move_cursor(row=min(prev, len(self._row_map) - 1))
+        elif not mcp:
+            self._status("Нет [[mcp]]-источников в config.toml", warn=True)
+
+    def _status(self, msg: str, *, warn: bool = False) -> None:
+        st = self.query_one("#mcp-status", Static)
+        st.update(f"[{'yellow' if warn else 'green'}]{msg}[/]")
+
+    def _at_cursor(self) -> config.McpServer | None:
+        table = self.query_one("#mcp-table", DataTable)
+        row = table.cursor_row
+        if row is None or row >= len(self._row_map):
+            return None
+        return self._row_map[row]
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        m = self._at_cursor()
+        if m is not None:
+            import json
+            self.app.push_screen(ContentScreen(
+                m.name, text=f"```json\n{json.dumps(m.server or {}, indent=2, ensure_ascii=False)}\n```"))
+
+    def action_toggle_local(self) -> None:
+        self._toggle(local=True)
+
+    def action_toggle_global(self) -> None:
+        self._toggle(local=False)
+
+    def _toggle(self, *, local: bool) -> None:
+        m = self._at_cursor()
+        if m is None:
+            return
+        if local:
+            new_enabled = not m.enabled
+            config.set_mcp_enabled_local(m.name, enabled=new_enabled)
+        else:
+            new_enabled = not m.enabled_base
+            config.set_mcp_enabled(m.name, enabled=new_enabled)
+        verb = "включён" if new_enabled else "выключен"
+        scope = "локально" if local else "глобально"
+        masked = " (локальный оверрайд активен)" if (not local and m.enabled_local is not None) else ""
+        self._status(f"{m.name} {verb} {scope}{masked} — мержу ~/.claude.json…")
+        self._merge_worker(f"{m.name} {verb} {scope}{masked}")
+
+    @work(thread=True, exclusive=True)
+    def _merge_worker(self, what: str) -> None:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            # settings+claude.json merge нужны; seed/сабмодули — нет.
+            errors = run_up(skip_submodules=True, skip_seed=True, quiet=True)
+        self.app.call_from_thread(self._merge_done, what, errors)
+
+    def _merge_done(self, what: str, errors: int) -> None:
+        if errors:
+            self._status(f"{what}, но с предупреждениями ({errors}). Перезапусти claude.", warn=True)
+        else:
+            self._status(f"{what} ✓ ~/.claude.json обновлён. Перезапусти claude.")
+        self._reload()
+
+
 class SkillsPane(TabPane):
     """Просмотр + toggle. Enter открывает SKILL.md, Space/`t` переключает."""
 
     BINDINGS = [
-        Binding("space,t", "toggle", "Вкл/выкл", show=True),
+        Binding("space,t", "toggle_local", "Вкл/выкл (локально)", show=True),
+        Binding("g", "toggle_global", "Вкл/выкл (глобально)", show=True),
         Binding("a", "add_submodule", "Добавить сабмодуль", show=True),
     ]
 
@@ -313,28 +438,41 @@ class SkillsPane(TabPane):
             return
         self.app.push_screen(ContentScreen(s.name, s.path / "SKILL.md"))
 
-    def action_toggle(self) -> None:
+    def action_toggle_local(self) -> None:
+        self._toggle(local=True)
+
+    def action_toggle_global(self) -> None:
+        self._toggle(local=False)
+
+    def _toggle(self, *, local: bool) -> None:
         target = self._at_cursor()
         if isinstance(target, str):  # заголовок источника → toggle всему содержимому
-            self._toggle_source(target)
+            self._toggle_source(target, local=local)
         elif isinstance(target, config.Skill):
-            self._toggle_skill(target)
+            self._toggle_skill(target, local=local)
 
-    def _toggle_skill(self, skill: config.Skill) -> None:
+    def _toggle_skill(self, skill: config.Skill, *, local: bool) -> None:
         new_enabled = not skill.enabled
-        # config.toml: правим `enabled`-список источника
-        config.set_skill_enabled(skill.source, skill.name, enabled=new_enabled)
+        if local:
+            config.set_skill_enabled_local(skill.source, skill.name, enabled=new_enabled)
+        else:
+            config.set_skill_enabled(skill.source, skill.name, enabled=new_enabled)
         verb = "включён" if new_enabled else "выключен"
-        self._apply_and_report(f"{skill.name} {verb}")
+        scope = "локально" if local else "глобально"
+        self._apply_and_report(f"{skill.name} {verb} {scope}")
 
-    def _toggle_source(self, source: str) -> None:
+    def _toggle_source(self, source: str, *, local: bool) -> None:
         # Все вкл → выключить весь источник; иначе (часть/ни одного) → включить все.
         cfg = config.load()
         group = [s for s in cfg.skills if s.source == source]
         new_enabled = not (group and all(s.enabled for s in group))
-        config.set_source_enabled(source, enabled=new_enabled)
+        if local:
+            config.set_source_enabled_local(source, enabled=new_enabled)
+        else:
+            config.set_source_enabled(source, enabled=new_enabled)
         verb = "включён" if new_enabled else "выключен"
-        self._apply_and_report(f"источник {source} {verb} ({len(group)} скилов)")
+        scope = "локально" if local else "глобально"
+        self._apply_and_report(f"источник {source} {verb} {scope} ({len(group)} скилов)")
 
     def _apply_and_report(self, what: str) -> None:
         """install (без сабмодулей) + статус + перерисовка."""
@@ -389,6 +527,7 @@ class ManagerApp(App):
     DataTable { height: 1fr; }
     #skills-status { height: 1; padding: 0 1; }
     #plugins-status { height: 1; padding: 0 1; }
+    #mcp-status { height: 1; padding: 0 1; }
 
     ContentScreen { align: center middle; }
     #modal-box {
@@ -414,6 +553,7 @@ class ManagerApp(App):
                 yield AgentsPane("Агенты", id="tab-agents")
                 yield SkillsPane("Скилы", id="tab-skills")
                 yield PluginsPane("Плагины", id="tab-plugins")
+                yield McpPane("MCP", id="tab-mcp")
         yield Footer()
 
 

@@ -1,4 +1,11 @@
-# config.toml — что линковать в ~/.claude (агенты, навыки, hooks)
+# config.toml — что линковать в ~/.claude (агенты, навыки, плагины, MCP, hooks)
+#
+# Локальный overlay
+# -----------------
+# config.local.toml (gitignore) переопределяет `enabled` источников для ТЕКУЩЕЙ машины.
+# Формат: [local.<section>] "<key>" = <enabled>, где section ∈ skills/agents/commands/
+# plugins/mcp; key — path источника (или name для mcp). Эффективный enabled = overlay,
+# если ключ есть, иначе значение отсюда. В TUI: `t` тоглит локально, `g` — глобально (тут).
 #
 # Источники скилов
 # ----------------
@@ -95,19 +102,22 @@ enabled = true
 # path = "commands"
 # enabled = ["*"]
 
-# --- MCP-серверы (standalone) -------------------------------------------------
+# --- MCP-серверы (user-scope) -------------------------------------------------
 #
-# MCP для НЕ-плагинных источников. Два режима: symlink готового .mcp.json (source)
-# либо inline-спека (пишется в mcpServers фрагмента settings, env ${VAR} как литерал).
+# Глобальные (user-scope) MCP: менеджер пишет включённые в ~/.claude.json (top-level
+# mcpServers) — CC читает MCP только оттуда, НЕ из settings.json. inline-спека
+# [mcp.server] (command/args/env | url/headers); env ${VAR} как литерал (CC разворачивает).
+#   name     — имя сервера в ~/.claude.json.
+#   enabled  — bool. Машино-специфично включать через config.local.toml ([local.mcp]).
 #
-# [[mcp]]
-# name = "example"
-# enabled = true
-# [mcp.server]
-# command = "npx"
-# args = ["-y", "some-mcp"]
-# [mcp.server.env]
-# KEY = "${KEY}"
+# monium_mcp — нужен только на рабочей машине (Аркадия). В git выключен; на нужной
+# машине включается: config.local.toml → [local.mcp] monium_mcp = true (или `t` в TUI).
+[[mcp]]
+name = "monium_mcp"
+enabled = false
+[mcp.server]
+command = "ya"
+args = ["tool", "mcp", "connect", "mcp.yandex.net/ws?servers=monium_mcp"]
 
 # --- Statusline --------------------------------------------------------------
 #

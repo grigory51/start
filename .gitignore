@@ -8,6 +8,9 @@
 .venv/
 __pycache__/
 
+# per-machine overrides (машино-специфичные вкл/выкл поверх config.toml)
+config.local.toml
+
 # plugin seed (производный — пересобирается на каждом `make up`)
 .seed/
 
