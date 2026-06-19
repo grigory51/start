@@ -41,26 +41,75 @@ path = "contrib/blender-skills"
 enabled = ["image-to-3d", "multi-image-to-3d", "threejs-export"]
 # exclude = ["threejs-export"]
 
-[[skills]]
-path = "contrib/infostyle-skill/skills"
-enabled = ["*"]
-
-[[skills]]
-path = "contrib/claude-seo/skills"
-enabled = ["*"]
-  # scripts/ лежит на plugin-root рядом со skills/; скилы зовут python3 scripts/X.py
-  # относительно своей папки — линкуем его в каждое зеркало seo-скила.
-  [[skills.symlinks]]
-  source = "contrib/claude-seo/scripts"
-  destination = "scripts"
-
 # --- Агенты -------------------------------------------------------------------
 
-# Локальные агенты репо.
+# Локальные агенты репо. (Агенты плагинов идут через [[plugins]], не сюда.)
 [[agents]]
 path = "agents"
 enabled = ["*"]
 
-[[agents]]
-path = "contrib/claude-seo/agents"
-enabled = ["*"]
+# --- Плагины (нативные CC) ----------------------------------------------------
+#
+# Источник с .claude-plugin/ (plugin.json + marketplace.json). НЕ симлинкуется:
+# менеджер собирает плагин в plugin seed (.seed/) через `claude plugin install` и
+# отдаёт CC через CLAUDE_CODE_PLUGIN_SEED_DIR. CC сам подключает skills/agents/
+# commands/hooks/MCP плагина. Требует `claude` в PATH (иначе фаза пропускается).
+#
+#   path     — корень плагина (каталог с .claude-plugin/).
+#   enabled  — bool: включить плагин целиком (плагин атомарен).
+#   marketplace / plugin — override имён, если автодетект из манифеста не сработал.
+
+[[plugins]]
+path = "contrib/claude-seo"
+enabled = true
+
+[[plugins]]
+path = "contrib/infostyle-skill"
+enabled = true
+
+[[plugins]]
+path = "contrib/caveman"
+enabled = true
+
+# --- Slash-команды ------------------------------------------------------------
+#
+# Рассыпанные *.md команды (как [[agents]]): имя файла без .md = имя команды,
+# symlink в ~/.claude/commands/. Команды плагинов идут через [[plugins]].
+#
+# [[commands]]
+# path = "commands"
+# enabled = ["*"]
+
+# --- MCP-серверы (standalone) -------------------------------------------------
+#
+# MCP для НЕ-плагинных источников. Два режима: symlink готового .mcp.json (source)
+# либо inline-спека (пишется в mcpServers фрагмента settings, env ${VAR} как литерал).
+#
+# [[mcp]]
+# name = "example"
+# enabled = true
+# [mcp.server]
+# command = "npx"
+# args = ["-y", "some-mcp"]
+# [mcp.server.env]
+# KEY = "${KEY}"
+
+# --- Statusline --------------------------------------------------------------
+#
+# Своя плашка статусбара. Файл линкуется в ~/.claude/<dest>, а settings.json
+# `statusLine` прописывается менеджером (managed, через sidecar). Убери секцию —
+# менеджер снимет statusLine (по sidecar), не трогая чужой.
+
+[statusline]
+path = "statusline/statusline.mjs"   # *.mjs/*.sh относительно корня репо
+dest = "statusline.mjs"              # имя в ~/.claude/
+command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
+
+# --- Hooks (авто-регистрация событий) -----------------------------------------
+#
+# Зарегистрировать loose-hook (hooks/*.sh) на события CC в ~/.claude/settings.json.
+# Файл симлинкается в ~/.claude/hooks/, команда `bash "<...>"` прописывается на events.
+#
+# [[hooks]]
+# path = "hooks/notify.sh"
+# events = ["Stop", "Notification"]

@@ -144,6 +144,94 @@ class AgentsPane(TabPane):
         self.app.push_screen(ContentScreen(a.name, a.path))
 
 
+class PluginsPane(TabPane):
+    """Просмотр + toggle нативных CC-плагинов ([[plugins]]).
+
+    Space/`t` включает/выключает плагин (правит config.toml + пересобирает seed +
+    мержит settings). Enter открывает plugin.json. Флаг ⚠ — есть SessionStart-хуки.
+    """
+
+    BINDINGS = [
+        Binding("space,t", "toggle", "Вкл/выкл", show=True),
+    ]
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._row_map: list[config.Plugin] = []
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="plugins-table", cursor_type="row", zebra_stripes=True)
+        yield Static("", id="plugins-status")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#plugins-table", DataTable)
+        table.add_column("◉", width=3)
+        table.add_column("Плагин (plugin@marketplace)", width=44)
+        table.add_column("⚠", width=3)
+        table.add_column("Описание")
+        self._reload()
+
+    def _reload(self) -> None:
+        table = self.query_one("#plugins-table", DataTable)
+        prev = table.cursor_row
+        table.clear()
+        self._row_map = []
+        plugins = config.load_plugins()
+        for p in plugins:
+            mark = "[green]●[/]" if p.enabled else "[dim]○[/]"
+            ref = p.ref if p.enabled else f"[dim]{p.ref}[/]"
+            warn = "[yellow]⚠[/]" if p.session_start_hooks else ""
+            table.add_row(mark, ref, warn, _truncate(p.description, 70))
+            self._row_map.append(p)
+        if self._row_map:
+            table.move_cursor(row=min(prev, len(self._row_map) - 1))
+        if not plugins:
+            self._status("Нет [[plugins]]-источников в config.toml", warn=True)
+
+    def _status(self, msg: str, *, warn: bool = False) -> None:
+        st = self.query_one("#plugins-status", Static)
+        st.update(f"[{'yellow' if warn else 'green'}]{msg}[/]")
+
+    def _at_cursor(self) -> config.Plugin | None:
+        table = self.query_one("#plugins-table", DataTable)
+        row = table.cursor_row
+        if row is None or row >= len(self._row_map):
+            return None
+        return self._row_map[row]
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        p = self._at_cursor()
+        if p is not None:
+            self.app.push_screen(ContentScreen(p.ref, p.path / ".claude-plugin" / "plugin.json"))
+
+    def action_toggle(self) -> None:
+        p = self._at_cursor()
+        if p is None:
+            return
+        new_enabled = not p.enabled
+        config.set_plugin_enabled(p.source, enabled=new_enabled)
+        verb = "включён" if new_enabled else "выключен"
+        self._status(f"{p.ref} {verb} — пересобираю seed…")
+        # Seed build сетевой/долгий (claude CLI) — в thread-воркере.
+        self._rebuild_worker(f"{p.ref} {verb}")
+
+    @work(thread=True, exclusive=True)
+    def _rebuild_worker(self, what: str) -> None:
+        # Полная пересборка: seed + settings (без сабмодулей, без loose-symlink-прунинга
+        # — он не нужен для plugin-toggle, но run_up дёшев и идемпотентен).
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            errors = run_up(skip_submodules=True, quiet=True)
+        self.app.call_from_thread(self._rebuild_done, what, errors)
+
+    def _rebuild_done(self, what: str, errors: int) -> None:
+        if errors:
+            self._status(f"{what}, но с предупреждениями ({errors}). Перезапусти claude.", warn=True)
+        else:
+            self._status(f"{what} ✓ seed+settings обновлены. Перезапусти claude.")
+        self._reload()
+
+
 class SkillsPane(TabPane):
     """Просмотр + toggle. Enter открывает SKILL.md, Space/`t` переключает."""
 
@@ -252,7 +340,8 @@ class SkillsPane(TabPane):
         """install (без сабмодулей) + статус + перерисовка."""
         buf = io.StringIO()
         with redirect_stdout(buf):
-            errors = run_up(skip_submodules=True, quiet=True)
+            # Toggle loose-скила: пересборка seed/merge settings не нужна — быстрый путь.
+            errors = run_up(skip_submodules=True, skip_seed=True, skip_settings=True, quiet=True)
         if errors:
             self._status(f"{what}, но install с предупреждениями ({errors})", warn=True)
         else:
@@ -299,6 +388,7 @@ class ManagerApp(App):
     Screen { layout: vertical; }
     DataTable { height: 1fr; }
     #skills-status { height: 1; padding: 0 1; }
+    #plugins-status { height: 1; padding: 0 1; }
 
     ContentScreen { align: center middle; }
     #modal-box {
@@ -323,6 +413,7 @@ class ManagerApp(App):
             with TabbedContent():
                 yield AgentsPane("Агенты", id="tab-agents")
                 yield SkillsPane("Скилы", id="tab-skills")
+                yield PluginsPane("Плагины", id="tab-plugins")
         yield Footer()
 
 

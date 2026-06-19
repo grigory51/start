@@ -22,13 +22,16 @@ def update_submodules(*, quiet: bool = False) -> int:
 
 
 def run_up(*, dry_run: bool = False, force: bool = False, quiet: bool = False,
-           skip_submodules: bool = False) -> int:
-    """Сабмодули + install. Возвращает число ошибок install (0 — успех).
+           skip_submodules: bool = False, skip_seed: bool = False,
+           skip_settings: bool = False) -> int:
+    """Сабмодули + install (seed + symlink + settings). Возвращает число ошибок install.
 
-    skip_submodules: пропустить git-шаг (для быстрого toggle из UI).
+    skip_submodules: пропустить git-шаг. skip_seed/skip_settings: пропустить сборку
+    плагинов / merge settings (для быстрого toggle loose-скилов из UI).
     """
     if not skip_submodules and not dry_run:
         rc = update_submodules(quiet=quiet)
         if rc != 0 and not quiet:
             print(f"  ! git submodule update вернул {rc}")
-    return run_install(dry_run=dry_run, force=force, quiet=quiet)
+    return run_install(dry_run=dry_run, force=force, quiet=quiet,
+                       skip_seed=skip_seed, skip_settings=skip_settings)

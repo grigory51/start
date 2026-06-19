@@ -7,3 +7,9 @@
 # uv / python
 .venv/
 __pycache__/
+
+# plugin seed (производный — пересобирается на каждом `make up`)
+.seed/
+
+# OMC runtime (legacy, если вдруг создаётся)
+.omc/

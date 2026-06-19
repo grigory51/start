@@ -47,6 +47,52 @@ class Agent:
 
 
 @dataclass
+class Plugin:
+    """Нативный CC-плагин из [[plugins]]: каталог с .claude-plugin/.
+
+    marketplace/plugin читаются из .claude-plugin/marketplace.json+plugin.json
+    (override полями в config.toml). enabled — bool (плагин атомарен). seed-сборка
+    и enabledPlugins ведутся по паре (plugin, marketplace).
+    """
+    name: str            # имя источника (basename path) — для UI/идентификации
+    path: Path           # абсолютный корень плагина (каталог с .claude-plugin/)
+    source: str          # rel-path источника из config.toml ([[plugins]])
+    marketplace: str     # marketplace name (из marketplace.json или override)
+    plugin: str          # plugin name (из marketplace.json/plugin.json или override)
+    enabled: bool
+    description: str = ""
+    # Команды SessionStart-хуков плагина (из hooks/hooks.json) — для предупреждения.
+    session_start_hooks: list[str] = field(default_factory=list)
+
+    @property
+    def ref(self) -> str:
+        """Идентификатор плагина для enabledPlugins: '<plugin>@<marketplace>'."""
+        return f"{self.plugin}@{self.marketplace}"
+
+
+@dataclass
+class Command:
+    """Slash-команда из [[commands]]: имя файла без .md, путь, источник."""
+    name: str
+    path: Path
+    source: str = ""     # path источника из config.toml ([[commands]])
+    description: str = ""
+
+
+@dataclass
+class McpServer:
+    """MCP-сервер из [[mcp]].
+
+    Два режима доставки: file (symlink готового .mcp.json) или inline-спека
+    (пишется в mcpServers фрагмента settings). enabled — bool.
+    """
+    name: str
+    enabled: bool
+    source: str = ""           # rel-path .mcp.json (режим file), либо ""
+    server: dict | None = None  # inline-спека {command,args,env|url,headers}
+
+
+@dataclass
 class ConfigResult:
     """Результат разбора конфига для дальнейшей линковки и UI."""
     skills: list[Skill] = field(default_factory=list)
@@ -288,6 +334,215 @@ def load_agents() -> list[Agent]:
     return agents
 
 
+# --- плагины (нативные CC) ----------------------------------------------------
+
+def _bool_enabled(entry: dict) -> bool:
+    """`enabled` источника как bool. Дефолт True. Терпит ["*"]/[] (для совместимости)."""
+    raw = entry.get("enabled", True)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw in ("*", "true", "1")
+    if isinstance(raw, list):
+        # ["*"] или непустой список → включено; [] → выключено.
+        return bool(raw)
+    return True
+
+
+def read_plugin_manifest(path: Path) -> tuple[str, str, list[str]]:
+    """Прочитать .claude-plugin плагина: (marketplace_name, plugin_name, session_start_cmds).
+
+    marketplace_name — из marketplace.json `name`. plugin_name — из marketplace.json
+    `plugins[0].name` (это install-идентификатор для `<plugin>@<mp>`; plugin.json `name`
+    может отличаться и НЕ используется CC при install — fallback только если в
+    marketplace.json нет plugins[]). session_start_cmds — shell-команды SessionStart-хуков
+    из hooks/hooks.json (для предупреждения). Пустые строки при отсутствии/ошибке.
+    """
+    import json
+
+    mp_name = plugin_name = ""
+    mp_file = path / ".claude-plugin" / "marketplace.json"
+    if mp_file.is_file():
+        try:
+            mp = json.loads(mp_file.read_text())
+            mp_name = mp.get("name", "")
+            plugins = mp.get("plugins", [])
+            if plugins and isinstance(plugins, list):
+                # plugins[0].name — это install-id (<plugin>@<mp>), приоритетный источник.
+                plugin_name = plugins[0].get("name", "")
+        except (json.JSONDecodeError, OSError, AttributeError):
+            pass
+
+    # Fallback на plugin.json только если marketplace не дал имя плагина.
+    if not plugin_name:
+        pj_file = path / ".claude-plugin" / "plugin.json"
+        if pj_file.is_file():
+            try:
+                plugin_name = json.loads(pj_file.read_text()).get("name", "")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    return mp_name, plugin_name, _scan_session_start(path)
+
+
+def _scan_session_start(path: Path) -> list[str]:
+    """SessionStart shell-команды из hooks/hooks.json плагина ([] при отсутствии)."""
+    import json
+
+    hooks_file = path / "hooks" / "hooks.json"
+    if not hooks_file.is_file():
+        return []
+    try:
+        data = json.loads(hooks_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    cmds: list[str] = []
+    for group in data.get("hooks", {}).get("SessionStart", []):
+        for hook in group.get("hooks", []):
+            if hook.get("type") == "command" and hook.get("command"):
+                cmds.append(hook["command"])
+    return cmds
+
+
+def _discover_plugins() -> tuple[list[Plugin], list[str]]:
+    """Все плагины из [[plugins]]-источников config.toml + warnings.
+
+    path → корень плагина (каталог с .claude-plugin/). marketplace/plugin читаются
+    из манифеста (override полями marketplace/plugin в записи). Дубль ref → warning.
+    """
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+
+    seen: dict[str, Plugin] = {}
+    for rel, entry in _sources(base, warnings, key="plugins"):
+        root = (REPO_DIR / rel).resolve()
+        if not (root / ".claude-plugin").is_dir():
+            warnings.append(
+                f"источник плагина не найден или без .claude-plugin/: {rel} "
+                f"(для сабмодуля — git submodule update --init)")
+            continue
+
+        mp_name, plugin_name, ss_hooks = read_plugin_manifest(root)
+        mp_name = entry.get("marketplace") or mp_name
+        plugin_name = entry.get("plugin") or plugin_name
+        if not mp_name or not plugin_name:
+            warnings.append(
+                f"{rel}: не удалось определить marketplace/plugin "
+                f"(укажите вручную полями marketplace/plugin) — пропуск")
+            continue
+
+        ref = f"{plugin_name}@{mp_name}"
+        if ref in seen:
+            warnings.append(
+                f"дубль плагина '{ref}': {rel} — пропуск (уже взят из {seen[ref].source})")
+            continue
+        seen[ref] = Plugin(
+            name=root.name, path=root, source=rel,
+            marketplace=mp_name, plugin=plugin_name,
+            enabled=_bool_enabled(entry),
+            description=_read_description(root / ".claude-plugin" / "plugin.json"),
+            session_start_hooks=ss_hooks,
+        )
+    return list(seen.values()), warnings
+
+
+def load_plugins() -> list[Plugin]:
+    """Все плагины из [[plugins]]-источников. Warnings глушатся (для TUI)."""
+    plugins, _ = _discover_plugins()
+    return plugins
+
+
+# --- команды (slash) ----------------------------------------------------------
+
+def _discover_commands() -> tuple[list[Command], list[str]]:
+    """Все команды из [[commands]]-источников. Зеркало _discover_agents (*.md)."""
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+
+    seen: dict[str, Command] = {}
+    for rel, entry in _sources(base, warnings, key="commands"):
+        root = (REPO_DIR / rel).resolve()
+        if not root.is_dir():
+            warnings.append(f"источник команд не найден: {rel}")
+            continue
+
+        exclude = set(entry.get("exclude", []))
+        available = {p.stem: p for p in root.glob("*.md")}
+        spec = _enabled_spec(entry)
+        selected = _select_names(spec, list(available))
+        for n in spec:
+            if n != "*" and n not in available:
+                warnings.append(f"{rel}: команда '{n}' не найдена (нет {n}.md)")
+
+        for n in sorted(selected):
+            if n in exclude:
+                continue
+            if n in seen:
+                warnings.append(
+                    f"дубль имени команды '{n}': {rel} — пропуск "
+                    f"(уже взята из {seen[n].source})")
+                continue
+            seen[n] = Command(name=n, path=available[n], source=rel,
+                              description=_read_description(available[n]))
+    return list(seen.values()), warnings
+
+
+def load_commands() -> list[Command]:
+    """Все команды из [[commands]]-источников. Warnings глушатся (для TUI)."""
+    commands, _ = _discover_commands()
+    return commands
+
+
+# --- MCP-серверы --------------------------------------------------------------
+
+def load_statusline() -> dict | None:
+    """`[statusline]` из config.toml: {path, dest, command} или None.
+
+    path — *.mjs/*.sh относительно репо; dest — имя в ~/.claude/; command — строка
+    для settings.json `statusLine`. None если секции нет/неполная.
+    """
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    sl = base.get("statusline")
+    if not isinstance(sl, dict):
+        return None
+    path = (sl.get("path") or "").strip()
+    command = (sl.get("command") or "").strip()
+    if not path or not command:
+        return None
+    dest = (sl.get("dest") or Path(path).name).strip()
+    return {"path": path, "dest": dest, "command": command}
+
+
+def load_mcp() -> tuple[list[McpServer], list[str]]:
+    """MCP-серверы из [[mcp]] config.toml + warnings.
+
+    [[mcp]] — name-keyed (не path), поэтому отдельный ридер. Каждая запись:
+    name (обяз.), enabled (bool, дефолт True), source (.mcp.json для symlink) либо
+    inline [mcp.server]. Дубль name → warning.
+    """
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+
+    seen: dict[str, McpServer] = {}
+    for entry in base.get("mcp", []):
+        name = (entry.get("name") or "").strip()
+        if not name:
+            warnings.append(f"[[mcp]] без name в {CONFIG.name} — пропуск")
+            continue
+        if name in seen:
+            warnings.append(f"дубль MCP '{name}' в {CONFIG.name} — пропуск")
+            continue
+        server = entry.get("server")
+        seen[name] = McpServer(
+            name=name,
+            enabled=_bool_enabled(entry),
+            source=(entry.get("source") or "").strip(),
+            server=server if isinstance(server, dict) else None,
+        )
+    return list(seen.values()), warnings
+
+
 # --- запись (toggle enabled) --------------------------------------------------
 
 def _write_enabled(source: str, spec: list[str]) -> None:
@@ -395,3 +650,59 @@ def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
         existing += "\n"
     CONFIG.write_text(existing + block)
     return True
+
+
+# --- запись (плагины) ---------------------------------------------------------
+
+def plugin_source_paths() -> set[str]:
+    """Все path из [[plugins]] базового config.toml (для проверки дублей)."""
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    return {e["path"] for e in _entries(base, CONFIG.name, warnings, key="plugins")}
+
+
+def add_plugin_source(rel_path: str) -> bool:
+    """Добавить [[plugins]] с данным path в версионный config.toml.
+
+    Текстовый append (как add_source) — сохраняет стиль файла. Дубль path → False.
+    Новый плагин включён (enabled = true).
+    """
+    if rel_path in plugin_source_paths():
+        return False
+
+    block = ("\n[[plugins]]\n"
+             f'path = "{rel_path}"\n'
+             'enabled = true\n')
+    existing = CONFIG.read_text() if CONFIG.is_file() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    CONFIG.write_text(existing + block)
+    return True
+
+
+def set_plugin_enabled(source: str, enabled: bool) -> None:
+    """Вкл/выкл плагин-источник `source` (path), правя `enabled = bool` в config.toml.
+
+    Плагин атомарен → enabled — простой bool. Правит существующую [[plugins]]-запись
+    (источники версионные); комментарии/форматирование сохраняются (tomlkit).
+    """
+    import tomlkit
+
+    doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
+    plugins = doc.get("plugins")
+    if plugins is None:
+        plugins = tomlkit.aot()
+        doc["plugins"] = plugins
+
+    target = None
+    for tbl in plugins:
+        if tbl.get("path") == source:
+            target = tbl
+            break
+    if target is None:
+        target = tomlkit.table()
+        target["path"] = source
+        plugins.append(target)
+
+    target["enabled"] = enabled
+    CONFIG.write_text(tomlkit.dumps(doc))

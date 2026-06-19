@@ -225,6 +225,43 @@ def install_agents(ctx: Ctx) -> None:
     ctx.say()
 
 
+def install_commands(ctx: Ctx) -> None:
+    """Slash-команды -> ~/.claude/commands/ (per-file symlink). Зеркало install_agents."""
+    dst_root = CLAUDE_DIR / "commands"
+    commands, warnings = config._discover_commands()
+    if not commands and not warnings:
+        return  # нет [[commands]] — ничего не печатаем
+    ctx.say(f"Команды -> {dst_root}/  (per-file symlink)")
+    if not ctx.dry_run:
+        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
+
+    ok, migrated = ensure_real_dir(ctx, dst_root)
+    if not ok:
+        ctx.say()
+        return
+
+    for w in warnings:
+        ctx.say(f"  ! {w}")
+        ctx.errors += 1
+
+    wanted = {c.name + ".md" for c in commands}
+
+    if not migrated and dst_root.is_dir() and not dst_root.is_symlink():
+        for entry in sorted(dst_root.iterdir()):
+            if entry.is_symlink() and _is_ours(_readlink(entry)) and entry.name not in wanted:
+                ctx.say(f"  - {entry.name} больше не активна — удаляю symlink")
+                ctx.do(f"rm {entry}", entry.unlink)
+
+    changed = 0
+    for c in commands:
+        st = link(ctx, c.path, dst_root / (c.name + ".md"), assume_absent=migrated, quiet=True)
+        changed += st == "linked"
+    delta = f", изменено {changed}" if changed else " — без изменений"
+    cm = _plural(len(commands), "команда", "команды", "команд")
+    ctx.say(f"  Итого: {cm}{delta}.")
+    ctx.say()
+
+
 def _mirror_skill(ctx: Ctx, skill: config.Skill, dst: Path) -> tuple[int, int]:
     """Разложить per-file зеркало одного скила в dst (реальная папка).
 
@@ -320,9 +357,9 @@ def install_skills(ctx: Ctx) -> None:
     total_links = 0
     changed = 0
     for s in skills:
-        t, l = _mirror_skill(ctx, s, dst_root / s.name)
+        t, linked = _mirror_skill(ctx, s, dst_root / s.name)
         total_links += t
-        changed += l
+        changed += linked
     delta = f", изменено {changed}" if changed else " — без изменений"
     sk = _plural(len(skills), "скил", "скила", "скилов")
     ln = _plural(total_links, "symlink", "symlink'а", "symlink'ов")
@@ -342,11 +379,51 @@ def install_hooks(ctx: Ctx) -> None:
     ctx.say()
 
 
-def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = False) -> int:
-    """Разложить symlink'и. Возвращает число ошибок (0 — успех).
+def install_claude_md(ctx: Ctx) -> None:
+    """Глобальный CLAUDE.md -> symlink на repo/CLAUDE.global.md.
 
-    quiet: подавить вступительный/финальный баннер (для вызова из UI).
+    Грузится во всех сессиях. Управляется из репо (правь CLAUDE.global.md, не
+    ~/.claude/CLAUDE.md). Чужой существующий файл бэкапится при --force.
     """
+    src = REPO_DIR / "CLAUDE.global.md"
+    if not src.is_file():
+        return
+    ctx.say(f"CLAUDE.md -> {CLAUDE_DIR / 'CLAUDE.md'}")
+    if not ctx.dry_run:
+        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
+    link(ctx, src, CLAUDE_DIR / "CLAUDE.md")
+    ctx.say()
+
+
+def install_statusline(ctx: Ctx) -> None:
+    """Statusline-скрипт -> symlink в ~/.claude/<dest>. settings.json пишет settings-слой."""
+    sl = config.load_statusline()
+    if not sl:
+        return
+    src = (REPO_DIR / sl["path"]).resolve()
+    ctx.say(f"Statusline -> {CLAUDE_DIR / sl['dest']}")
+    if not ctx.dry_run:
+        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
+    link(ctx, src, CLAUDE_DIR / sl["dest"])
+    ctx.say()
+
+
+def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = False,
+                skip_seed: bool = False, skip_settings: bool = False) -> int:
+    """Разложить плагины (seed) + symlink'и + смержить settings. Возвращает число ошибок.
+
+    Порядок (важен для миграции skills→plugins):
+      1. seed build — собрать включённые [[plugins]] через claude CLI;
+      2. settings merge — enabledPlugins + SEED_DIR + mcp + hooks (до прун-фаз symlink'ов,
+         чтобы плагин был зарегистрирован раньше, чем исчезнут его старые loose-зеркала);
+      3. loose-symlink'и: agents, skills (с пруном выпавшего), commands, hooks-файлы.
+
+    quiet: подавить баннер. skip_seed/skip_settings: пропустить соответствующую фазу
+    (быстрый toggle loose из UI).
+    """
+    from . import plugins as plugins_mod
+    from . import settings as settings_mod
+
     ctx = Ctx(dry_run, force)
     if not quiet:
         ctx.say(f"Репо:        {REPO_DIR}")
@@ -355,6 +432,17 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
             ctx.say("(dry-run: изменения не применяются)")
         ctx.say()
 
+    # 1. Плагины → seed (включённые [[plugins]] собираются самим claude CLI).
+    plugin_list = config.load_plugins()
+    if not skip_seed:
+        seed_res = plugins_mod.build_seed(ctx)
+        plugin_list = seed_res.plugins
+
+    # 2. Settings merge (enabledPlugins/SEED_DIR/mcp/hooks) — до прун-фаз symlink'ов.
+    if not skip_settings:
+        ctx.errors += settings_mod.merge_into_settings(plugin_list, dry_run=dry_run)
+
+    # 3. Loose-symlink'и.
     install_agents(ctx)
     try:
         install_skills(ctx)
@@ -364,7 +452,10 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
         ctx.say(f"  ! {e}")
         ctx.errors += 1
         ctx.say()
+    install_commands(ctx)
     install_hooks(ctx)
+    install_claude_md(ctx)
+    install_statusline(ctx)
 
     if not quiet:
         if ctx.errors:
@@ -374,7 +465,5 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
         ctx.say()
         ctx.say("Запуск оркестратора:  claude --agent architect")
         ctx.say("Список агентов:        /agents  (внутри сессии Claude Code)")
-        ctx.say()
-        ctx.say("Нотификации: hooks/notify.sh подключён в ~/.claude/hooks/, событийные")
-        ctx.say("хуки регистрируются в ~/.claude/settings.json вручную (см. README).")
+        ctx.say("Плагины:              /plugin  (после перезапуска claude — seed читается на старте)")
     return ctx.errors

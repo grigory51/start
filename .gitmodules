@@ -7,3 +7,6 @@
 [submodule "contrib/claude-seo"]
 	path = contrib/claude-seo
 	url = https://github.com/AgriciDaniel/claude-seo
+[submodule "contrib/caveman"]
+	path = contrib/caveman
+	url = https://github.com/JuliusBrussee/caveman

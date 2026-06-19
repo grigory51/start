@@ -114,6 +114,24 @@ def add_submodule(
         err = (proc.stderr or proc.stdout).strip()
         return AddResult(False, f"git submodule add не удался: {err}")
 
+    # 2a. нативный плагин? (.claude-plugin/) → регистрируем как [[plugins]], не [[skills]].
+    if (sub_path / ".claude-plugin").is_dir():
+        added = config.add_plugin_source(sub_rel)
+        install_errors = 0
+        if do_install:
+            from .up import run_up
+            install_errors = run_up(skip_submodules=True, quiet=quiet)
+        mp, plugin, _ = config.read_plugin_manifest(sub_path)
+        ref = f"{plugin}@{mp}" if plugin and mp else sub_rel
+        src_note = "плагин зарегистрирован" if added else "плагин уже был в config.toml"
+        return AddResult(
+            ok=True,
+            message=f"{sub_rel} подключён как нативный плагин ({ref}), {src_note}",
+            source_path=sub_rel,
+            submodule_path=sub_rel,
+            install_errors=install_errors,
+        )
+
     # 2. определить подпапку со скилами
     if skills_subdir is None:
         detected, matches = detect_skills_subdir(sub_path)
