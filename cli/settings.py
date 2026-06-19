@@ -85,7 +85,7 @@ def build_fragment(plugins: list[config.Plugin]) -> dict:
     frag = {
         "enabledPlugins": enabled_plugins,
         "extraKnownMarketplaces": marketplaces,
-        "env": {SEED_ENV_KEY: str(SEED_DIR)},
+        "env": {SEED_ENV_KEY: str(SEED_DIR), **config.load_env()},
         "hooks": hooks,
     }
     sl = config.load_statusline()

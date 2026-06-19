@@ -119,6 +119,14 @@ enabled = false
 command = "ya"
 args = ["tool", "mcp", "connect", "mcp.yandex.net/ws?servers=monium_mcp"]
 
+# --- Env (переменные окружения в ~/.claude/settings.json) ---------------------
+#
+# Произвольные env для CC, менеджер мержит их в settings.json `env` (managed, sidecar).
+# ENABLE_CLAUDEAI_MCP_SERVERS=false — отключить claude.ai connectors (напр. Google Drive),
+# которые синхронятся из аккаунта claude.ai, а не из этого репо.
+[env]
+ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+
 # --- Statusline --------------------------------------------------------------
 #
 # Своя плашка статусбара. Файл линкуется в ~/.claude/<dest>, а settings.json

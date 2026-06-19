@@ -586,6 +586,20 @@ def load_statusline() -> dict | None:
     return {"path": path, "dest": dest, "command": command}
 
 
+def load_env() -> dict[str, str]:
+    """`[env]` из config.toml: произвольные env-переменные для ~/.claude/settings.json.
+
+    Менеджер мержит их в settings.json `env` (managed, через sidecar). Значения — строки.
+    Напр. ENABLE_CLAUDEAI_MCP_SERVERS = "false" (отключить claude.ai connectors).
+    """
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    env = base.get("env", {})
+    if not isinstance(env, dict):
+        return {}
+    return {str(k): str(v) for k, v in env.items()}
+
+
 def load_mcp() -> tuple[list[McpServer], list[str]]:
     """MCP-серверы из [[mcp]] config.toml + warnings.
 
