@@ -2,7 +2,7 @@
 
 CC не умеет import — всё в одном settings.json на scope. Менеджеру нужно дописать
 свои ключи (enabledPlugins/extraKnownMarketplaces от seed-сборки, env.SEED_DIR,
-mcpServers, hooks), НЕ затронув чужие (caveman/omc/notify/permissions/...).
+mcpServers, hooks), НЕ затронув чужие (permissions/model/statusLine/чужие плагины…).
 
 JSON без комментариев → роль begin/end-маркеров играет **sidecar-манифест**
 ~/.claude/.claude-agents-managed.json: список под-ключей, которые менеджер записал в

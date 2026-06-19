@@ -10,3 +10,6 @@
 [submodule "contrib/caveman"]
 	path = contrib/caveman
 	url = https://github.com/JuliusBrussee/caveman
+[submodule "contrib/ast-index"]
+	path = contrib/ast-index
+	url = https://github.com/defendend/Claude-ast-index-search

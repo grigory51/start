@@ -63,6 +63,9 @@ class Plugin:
     description: str = ""
     # Команды SessionStart-хуков плагина (из hooks/hooks.json) — для предупреждения.
     session_start_hooks: list[str] = field(default_factory=list)
+    # Внешние зависимости из [[plugins.requirements]]: [{name, check, hint}].
+    # check — shell-команда проверки наличия (rc 0 = есть); hint — как поставить.
+    requirements: list[dict] = field(default_factory=list)
 
     @property
     def ref(self) -> str:
@@ -404,6 +407,31 @@ def _scan_session_start(path: Path) -> list[str]:
     return cmds
 
 
+def _parse_requirements(entry: dict, rel: str, warnings: list[str]) -> list[dict]:
+    """Разобрать [[plugins.requirements]] источника: список {name, check, hint}.
+
+    nested array-of-tables → entry["requirements"] = list[dict]. Каждая запись обязана
+    иметь непустые check (shell-команда проверки) и hint (как поставить); name
+    опционален (для вывода). Битые записи пропускаются с warning.
+    """
+    out: list[dict] = []
+    raw = entry.get("requirements", [])
+    if not isinstance(raw, list):
+        warnings.append(f"{rel}: [[plugins.requirements]] не список — игнорирую")
+        return out
+    for req in raw:
+        if not isinstance(req, dict):
+            continue
+        check = (req.get("check") or "").strip()
+        hint = (req.get("hint") or "").strip()
+        name = (req.get("name") or "").strip()
+        if not check or not hint:
+            warnings.append(f"{rel}: [[plugins.requirements]] без check/hint — пропуск")
+            continue
+        out.append({"name": name, "check": check, "hint": hint})
+    return out
+
+
 def _discover_plugins() -> tuple[list[Plugin], list[str]]:
     """Все плагины из [[plugins]]-источников config.toml + warnings.
 
@@ -442,6 +470,7 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
             enabled=_bool_enabled(entry),
             description=_read_description(root / ".claude-plugin" / "plugin.json"),
             session_start_hooks=ss_hooks,
+            requirements=_parse_requirements(entry, rel, warnings),
         )
     return list(seen.values()), warnings
 

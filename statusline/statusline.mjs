@@ -2,9 +2,9 @@
 /**
  * statusline.mjs — статусбар Claude Code (своя плашка, без зависимостей).
  *
- * Воспроизводит вид OMC HUD, но на нативных полях stdin Claude Code — без OMC,
- * sqlite и npm-пакетов. Линкуется в ~/.claude/ менеджером claude-agents и
- * подключается через settings.json `statusLine` (см. config.toml [statusline]).
+ * Работает на нативных полях stdin Claude Code — без внешних пакетов и sqlite.
+ * Линкуется в ~/.claude/ менеджером claude-agents и подключается через
+ * settings.json `statusLine` (см. config.toml [statusline]).
  *
  * CC передаёт JSON на stdin (docs: code.claude.com/docs/en/statusline). Используем:
  *   model.display_name                     — модель

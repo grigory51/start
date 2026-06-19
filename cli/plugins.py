@@ -53,6 +53,28 @@ def _run(cmd: list[str], seed: Path) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
+def check_requirements(ctx, plugins) -> None:
+    """Проверить внешние зависимости включённых плагинов ([[plugins.requirements]]).
+
+    Для каждого требования прогоняется `check` (shell). При ненулевом коде печатается
+    `hint` — как поставить. Менеджер сам зависимость НЕ ставит (внешний софт). Не
+    фатально: только предупреждение, ctx.errors не растёт.
+    """
+    for p in plugins:
+        if not p.enabled:
+            continue
+        for req in p.requirements:
+            try:
+                rc = subprocess.run(req["check"], shell=True, cwd=REPO_DIR,
+                                    capture_output=True).returncode
+            except OSError:
+                rc = 1
+            if rc != 0:
+                label = req.get("name") or req["check"]
+                ctx.say(f"  ! {p.ref}: требуется «{label}» — не найдено.")
+                ctx.say(f"    Установить: {req['hint']}")
+
+
 def build_seed(ctx) -> SeedResult:
     """Пересобрать plugin seed из всех включённых [[plugins]]-источников.
 
@@ -85,6 +107,9 @@ def build_seed(ctx) -> SeedResult:
         return res
 
     enabled = [p for p in plugins if p.enabled]
+
+    # Проверка внешних зависимостей плагинов (бинари): предупреждаем + подсказка.
+    check_requirements(ctx, enabled)
 
     # Полная пересборка: сносим старый seed (наш производный каталог).
     if SEED_DIR.exists():

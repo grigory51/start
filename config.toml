@@ -58,6 +58,9 @@ enabled = ["*"]
 #   path     — корень плагина (каталог с .claude-plugin/).
 #   enabled  — bool: включить плагин целиком (плагин атомарен).
 #   marketplace / plugin — override имён, если автодетект из манифеста не сработал.
+#   [[plugins.requirements]] — внешние зависимости плагина (бинари): name/check/hint.
+#              `check` — shell-команда проверки (rc 0 = есть), `hint` — как поставить.
+#              Менеджер при up проверяет и при отсутствии печатает hint (сам НЕ ставит).
 
 [[plugins]]
 path = "contrib/claude-seo"
@@ -70,6 +73,18 @@ enabled = true
 [[plugins]]
 path = "contrib/caveman"
 enabled = true
+
+# ast-index — структурный поиск по коду (символы/вызовы/иерархии) вместо grep.
+# Плагин даёт скил/правила/команды; сам бинарь ast-index ставится отдельно (см.
+# [[plugins.requirements]]). Команды: search/usages/implementations/callers/outline/...
+[[plugins]]
+path = "contrib/ast-index"
+enabled = true
+  # Бинарь ast-index не входит в плагин — менеджер проверяет наличие и подсказывает.
+  [[plugins.requirements]]
+  name = "ast-index"
+  check = "command -v ast-index"
+  hint = "brew tap defendend/ast-index && brew install ast-index"
 
 # --- Slash-команды ------------------------------------------------------------
 #
