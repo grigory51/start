@@ -12,10 +12,18 @@
  *   cost.total_duration_ms                 — длительность сессии
  *   context_window.used_percentage         — заполнение контекста
  *
+ * Дополнительно (не из stdin) читаем ~/.claude/state/focus.json — внешнее состояние
+ * серии работы, которое ведёт hook focus-track.sh на UserPromptSubmit. Из него берём
+ * «focus» — длительность текущего непрерывного захода (statusline сам по себе stateless,
+ * поэтому «время подряд» считать неоткуда, кроме этого файла).
+ *
  * Печатает одну строку. Всегда exit 0 — статусбар не должен ронять сессию.
  */
 
 import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // --- ANSI ---
 const C = {
@@ -102,6 +110,69 @@ function read() {
   }
 }
 
+// «focus» — минуты текущей непрерывной серии работы. Состояние ведёт hook
+// focus-track.sh (TSV "<start>\t<last>" в ~/.claude/state/focus.json). Возвращает
+// минуты от start или null, если файла нет / он не читается / серия протухла
+// (последний промпт старше FOCUS_GAP — пользователь отошёл, ещё не вернулся).
+// FOCUS_GAP должен совпадать с GAP в focus-track.sh (10 мин).
+const FOCUS_GAP = 600;            // секунд: разрыв больше → серия неактуальна
+const FOCUS_NUDGE = 30, FOCUS_WARN = 60, FOCUS_MAX = 120;  // минуты: пороги сигнала
+function focusElapsed() {
+  const base = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  let start, last;
+  try {
+    const raw = readFileSync(join(base, "state", "focus.json"), "utf8").trim();
+    [start, last] = raw.split("\t").map(Number);
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(last)) return null;
+  const now = Date.now();
+  if (now - last * 1000 > FOCUS_GAP * 1000) return null;  // серия протухла
+  return Math.floor((now - start * 1000) / 60000);
+}
+
+// Ширина терминала. CC запускает statusline child-процессом с piped stdout, поэтому
+// process.stdout.columns/$COLUMNS/tput не работают (см. issue anthropics/claude-code
+// #22115, #5430). Обходим: поднимаемся по предкам процесса до реального tty (его держит
+// процесс CC) и снимаем ширину через `stty -f /dev/<tty> size` (rows cols). null —
+// если tty не нашёлся / stty недоступен; вызывающий тогда не выравнивает по краю.
+// Приоритет у env CC_STATUSLINE_COLS — ручной оверрайд, если детект подведёт.
+function termCols() {
+  const override = Number(process.env.CC_STATUSLINE_COLS);
+  if (Number.isFinite(override) && override > 0) return override;
+  try {
+    let pid = process.pid;
+    for (let i = 0; i < 12; i++) {
+      const line = execSync(`ps -o ppid=,tty= -p ${pid}`, { encoding: "utf8" }).trim();
+      if (!line) break;
+      const [ppid, tty] = line.split(/\s+/);
+      if (tty && tty !== "??" && tty !== "?") {
+        const size = execSync(`stty -f /dev/${tty} size 2>/dev/null`, { encoding: "utf8" }).trim();
+        const cols = Number(size.split(/\s+/)[1]);
+        return Number.isFinite(cols) && cols > 0 ? cols : null;
+      }
+      if (!ppid || ppid === "1") break;
+      pid = Number(ppid);
+    }
+  } catch { /* нет ps/stty или нет доступа — не выравниваем */ }
+  return null;
+}
+
+// Видимая ширина строки в ячейках терминала: без ANSI-escape и со счётом эмодзи как 2.
+// Нужно для right-align — байтовая длина строки с цветами не равна занятым колонкам.
+function visibleWidth(s) {
+  // eslint-disable-next-line no-control-regex
+  const noAnsi = s.replace(/\x1b\[[0-9;]*m/g, "");
+  let w = 0;
+  for (const ch of noAnsi) {
+    const cp = ch.codePointAt(0);
+    // Эмодзи/символы вне BMP и в диапазонах пиктограмм занимают 2 ячейки.
+    w += cp >= 0x1100 && (cp >= 0x1f000 || (cp >= 0x2600 && cp <= 0x27bf) || cp >= 0x10000) ? 2 : 1;
+  }
+  return w;
+}
+
 function main() {
   const d = read();
   const parts = [];
@@ -122,24 +193,23 @@ function main() {
     const used = Math.round(lim.used_percentage);
     const reset = untilReset(lim.resets_at);
     const tag = reset ? `${label}(${reset})` : label;
-    // pace: доля прошедшего времени окна → ожидаемый равномерный расход.
-    // Цвет — по ratio (used%/expected%). Рядом с used% — запас в пунктах квоты:
-    // slack = expected% − used%. «+» = ниже графика (можно ещё столько потратить),
-    // «−» = перерасход относительно графика. Нагляднее ratio, т.к. в скобках tag
-    // показан остаток до сброса, а не прошедшее время.
-    let color, slack = null;
+    // pace-ratio = used% / expected%, где expected% — доля прошедшего времени окна
+    // (равномерный расход к текущему моменту). Это и цвет, и подпись:
+    //   <1 темп ниже графика (экономишь), ≈1 ровно по графику, >1 перерасход.
+    // Множитель ×N прямо отвечает «насколько умерить»: ×0.41 — впятеро ниже потолка,
+    // ×1.3 — режь темп до ~0.77 от текущего, чтобы вернуться к ×1.
+    let color, ratio = null;
     if (lim.resets_at) {
       const remaining = lim.resets_at * 1000 - Date.now();
       const elapsedFrac = Math.max(0, Math.min(1, (windowMs - remaining) / windowMs));
       const expected = elapsedFrac * 100;
       // В самом начале окна (expected≈0) не вспыхиваем красным: считаем pace по факту.
-      const ratio = expected >= 1 ? lim.used_percentage / expected : (used > 0 ? 2 : 0);
+      ratio = expected >= 1 ? lim.used_percentage / expected : (used > 0 ? 2 : 0);
       color = paceColor(ratio);  // ≤.70 зел · ≤.90 жёлт · ≤1 красн · >1 мигание
-      slack = expected - lim.used_percentage;
     } else {
       color = paceColor(used / 100);  // нет resets_at → по абсолютной доле
     }
-    const pace = slack != null ? ` ${C.dim}${slack >= 0 ? "+" : "−"}${Math.round(Math.abs(slack))}%${C.reset}` : "";
+    const pace = ratio != null ? ` ${C.dim}×${ratio.toFixed(ratio < 10 ? 2 : 0)}${C.reset}` : "";
     return `${C.dim}${tag}: ${C.reset}${color}${used}%${C.reset}${pace}`;
   };
   const lims = [limit(rl.five_hour, "5h", FIVE_H), limit(rl.seven_day, "7d", SEVEN_D)].filter(Boolean);
@@ -161,7 +231,40 @@ function main() {
     parts.push(`${C.dim}ctx: ${C.reset}${pct(cw.used_percentage)}`);
   }
 
-  process.stdout.write(parts.join(sep));
+  const left = parts.join(sep);
+
+  // Focus — длительность непрерывного захода (анти-залипание). Прижимаем к ПРАВОМУ краю
+  // экрана: между левой частью и focus набиваем пробелы до ширины терминала. Цвет-
+  // термометр по доле к FOCUS_MAX, эмодзи на порогах, мигание на переборе.
+  const fm = focusElapsed();
+  let focusSeg = "";
+  if (fm != null) {
+    const emoji = fm >= FOCUS_MAX ? " 🔥" : fm >= FOCUS_WARN ? " ⏰" : fm >= FOCUS_NUDGE ? " 🍅" : "";
+    const blink = fm >= FOCUS_MAX ? C.blink : "";
+    const color = blink + heat(Math.min(100, (fm / FOCUS_MAX) * 100));
+    focusSeg = `${C.dim}focus: ${C.reset}${color}${dur(fm * 60000)}${emoji}${C.reset}`;
+  }
+
+  if (!focusSeg) {
+    process.stdout.write(left);
+    return;
+  }
+
+  // CC съедает несколько колонок справа (паддинг рамки + место под свои сообщения),
+  // поэтому реальная ширина меньше stty cols. Держим запас, чтобы focus не обрезался и
+  // не вызвал перенос строки. Подстраивается через env CC_STATUSLINE_MARGIN.
+  const RIGHT_MARGIN = Number(process.env.CC_STATUSLINE_MARGIN) || 5;
+  const cols = termCols();
+  const gap = cols != null
+    ? cols - RIGHT_MARGIN - visibleWidth(left) - visibleWidth(focusSeg)
+    : null;
+  // Если ширину не узнали или строка не влезает — фолбэк: focus просто последним
+  // сегментом через обычный разделитель (без выравнивания).
+  if (gap != null && gap >= 1) {
+    process.stdout.write(left + " ".repeat(gap) + focusSeg);
+  } else {
+    process.stdout.write(left + sep + focusSeg);
+  }
 }
 
 main();
