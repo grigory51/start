@@ -146,3 +146,7 @@ command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
 # [[hooks]]
 # path = "hooks/notify.sh"
 # events = ["Stop", "Notification"]
+
+[[hooks]]
+path = "hooks/focus-track.sh"
+events = ["UserPromptSubmit"]
