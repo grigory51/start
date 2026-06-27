@@ -112,8 +112,8 @@ function read() {
 
 // «focus» — минуты текущей непрерывной серии работы. Состояние ведёт hook
 // focus-track.sh (TSV "<start>\t<last>" в ~/.claude/state/focus.json). Возвращает
-// минуты от start или null, если файла нет / он не читается / серия протухла
-// (последний промпт старше FOCUS_GAP — пользователь отошёл, ещё не вернулся).
+// минуты от start. Если файла нет / он не читается / серия протухла (последний промпт
+// старше FOCUS_GAP — был перерыв), отдаём 0: focus показываем ВСЕГДА, отсчёт с нуля.
 // FOCUS_GAP должен совпадать с GAP в focus-track.sh (10 мин).
 const FOCUS_GAP = 600;            // секунд: разрыв больше → серия неактуальна
 const FOCUS_NUDGE = 30, FOCUS_WARN = 60, FOCUS_MAX = 120;  // минуты: пороги сигнала
@@ -124,11 +124,11 @@ function focusElapsed() {
     const raw = readFileSync(join(base, "state", "focus.json"), "utf8").trim();
     [start, last] = raw.split("\t").map(Number);
   } catch {
-    return null;
+    return 0;
   }
-  if (!Number.isFinite(start) || !Number.isFinite(last)) return null;
+  if (!Number.isFinite(start) || !Number.isFinite(last)) return 0;
   const now = Date.now();
-  if (now - last * 1000 > FOCUS_GAP * 1000) return null;  // серия протухла
+  if (now - last * 1000 > FOCUS_GAP * 1000) return 0;  // серия протухла — отсчёт с нуля
   return Math.floor((now - start * 1000) / 60000);
 }
 
