@@ -568,10 +568,12 @@ def load_commands() -> list[Command]:
 # --- MCP-серверы --------------------------------------------------------------
 
 def load_statusline() -> dict | None:
-    """`[statusline]` из config.toml: {path, dest, command} или None.
+    """`[statusline]` из config.toml: {path, dest, command, requirements} или None.
 
     path — *.mjs/*.sh относительно репо; dest — имя в ~/.claude/; command — строка
-    для settings.json `statusLine`. None если секции нет/неполная.
+    для settings.json `statusLine`. requirements — внешние зависимости команды
+    ([[statusline.requirements]], та же схема, что у плагинов: {name, check, hint});
+    напр. `node` для .mjs-статусбара. None если секции нет/неполная.
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
@@ -583,7 +585,9 @@ def load_statusline() -> dict | None:
     if not path or not command:
         return None
     dest = (sl.get("dest") or Path(path).name).strip()
-    return {"path": path, "dest": dest, "command": command}
+    requirements = _parse_requirements(sl, "config.toml [statusline]", warnings)
+    return {"path": path, "dest": dest, "command": command,
+            "requirements": requirements}
 
 
 def load_env() -> dict[str, str]:

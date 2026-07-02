@@ -91,7 +91,7 @@ enabled = true
   [[plugins.requirements]]
   name = "ast-index"
   check = "command -v ast-index"
-  hint = "brew tap defendend/ast-index && brew install ast-index"
+  hint = "brew tap defendend/ast-index && brew trust defendend/ast-index && brew install ast-index"
 
 # --- Slash-команды ------------------------------------------------------------
 #
@@ -137,6 +137,12 @@ ENABLE_CLAUDEAI_MCP_SERVERS = "false"
 path = "statusline/statusline.mjs"   # *.mjs/*.sh относительно корня репо
 dest = "statusline.mjs"              # имя в ~/.claude/
 command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
+  # Команда statusline требует node (файл — .mjs). Без node CC молча не запускает
+  # статусбар (плашка не появляется) — менеджер проверяет наличие и подсказывает.
+  [[statusline.requirements]]
+  name = "node"
+  check = "command -v node"
+  hint = "1. Install nvm (https://github.com/nvm-sh/nvm)  2. nvm install --lts"
 
 # --- Hooks (авто-регистрация событий) -----------------------------------------
 #

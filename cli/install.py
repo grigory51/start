@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 
 from . import config
+from . import plugins
+from . import settings
 from .config import REPO_DIR
 
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude"))
@@ -405,6 +407,10 @@ def install_statusline(ctx: Ctx) -> None:
     if not ctx.dry_run:
         CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
     link(ctx, src, CLAUDE_DIR / sl["dest"])
+    # Зависимости команды statusline (напр. node для .mjs): без них CC молча не
+    # запускает статусбар — проверяем и подсказываем, как поставить.
+    plugins.check_requirements(ctx, "config.toml [statusline]",
+                               sl.get("requirements", []))
     ctx.say()
 
 
@@ -421,9 +427,6 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
     quiet: подавить баннер. skip_seed/skip_settings: пропустить соответствующую фазу
     (быстрый toggle loose из UI).
     """
-    from . import plugins as plugins_mod
-    from . import settings as settings_mod
-
     ctx = Ctx(dry_run, force)
     if not quiet:
         ctx.say(f"Репо:        {REPO_DIR}")
@@ -435,12 +438,12 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
     # 1. Плагины → seed (включённые [[plugins]] собираются самим claude CLI).
     plugin_list = config.load_plugins()
     if not skip_seed:
-        seed_res = plugins_mod.build_seed(ctx)
+        seed_res = plugins.build_seed(ctx)
         plugin_list = seed_res.plugins
 
     # 2. Settings merge (enabledPlugins/SEED_DIR/mcp/hooks) — до прун-фаз symlink'ов.
     if not skip_settings:
-        ctx.errors += settings_mod.merge_into_settings(plugin_list, dry_run=dry_run)
+        ctx.errors += settings.merge_into_settings(plugin_list, dry_run=dry_run)
 
     # 3. Loose-symlink'и.
     install_agents(ctx)
