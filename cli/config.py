@@ -38,6 +38,11 @@ class Skill:
     # source — путь относительно корня репо; destination — имя/путь внутри
     # папки-зеркала скила. Применяются к каждому скилу источника.
     symlinks: list[dict] = field(default_factory=list)
+    # Внешние зависимости из [[skills.requirements]] источника: [{name, check, hint}].
+    # check — shell-команда проверки наличия (rc 0 = есть); hint — как поставить.
+    # Прокидываются в каждый скил источника (как symlinks); менеджер сам их НЕ ставит,
+    # только проверяет при up и подсказывает. Напр. локальный Skottie-плеер для рендера.
+    requirements: list[dict] = field(default_factory=list)
     # True, если у источника этого скила есть запись в config.local.toml ([local.skills]).
     source_has_local: bool = False
 
@@ -296,6 +301,7 @@ def load() -> ConfigResult:
 
         exclude = set(entry.get("exclude", []))
         symlinks = _parse_symlinks(entry, rel, res.warnings)
+        requirements = _parse_requirements(entry, rel, res.warnings)
         available = {p.name: p for p in root.iterdir() if is_skill(p)}
 
         spec = _effective_spec(lsec, rel, entry)
@@ -319,6 +325,7 @@ def load() -> ConfigResult:
                 enabled=n in selected,
                 description=_read_description(available[n] / "SKILL.md"),
                 symlinks=symlinks,
+                requirements=requirements,
                 source_has_local=has_local,
             )
 
@@ -447,16 +454,17 @@ def _scan_session_start(path: Path) -> list[str]:
 
 
 def _parse_requirements(entry: dict, rel: str, warnings: list[str]) -> list[dict]:
-    """Разобрать [[plugins.requirements]] источника: список {name, check, hint}.
+    """Разобрать `requirements` источника: список {name, check, hint}.
 
-    nested array-of-tables → entry["requirements"] = list[dict]. Каждая запись обязана
-    иметь непустые check (shell-команда проверки) и hint (как поставить); name
-    опционален (для вывода). Битые записи пропускаются с warning.
+    Общий парсер для [[plugins.requirements]], [[skills.requirements]] и
+    [[statusline.requirements]]. nested array-of-tables → entry["requirements"] =
+    list[dict]. Каждая запись обязана иметь непустые check (shell-команда проверки) и
+    hint (как поставить); name опционален (для вывода). Битые записи пропускаются с warning.
     """
     out: list[dict] = []
     raw = entry.get("requirements", [])
     if not isinstance(raw, list):
-        warnings.append(f"{rel}: [[plugins.requirements]] не список — игнорирую")
+        warnings.append(f"{rel}: requirements не список — игнорирую")
         return out
     for req in raw:
         if not isinstance(req, dict):
@@ -465,7 +473,7 @@ def _parse_requirements(entry: dict, rel: str, warnings: list[str]) -> list[dict
         hint = (req.get("hint") or "").strip()
         name = (req.get("name") or "").strip()
         if not check or not hint:
-            warnings.append(f"{rel}: [[plugins.requirements]] без check/hint — пропуск")
+            warnings.append(f"{rel}: requirements без check/hint — пропуск")
             continue
         out.append({"name": name, "check": check, "hint": hint})
     return out

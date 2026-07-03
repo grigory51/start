@@ -13,3 +13,9 @@
 [submodule "contrib/ast-index"]
 	path = contrib/ast-index
 	url = https://github.com/defendend/Claude-ast-index-search
+[submodule "contrib/claude-mem"]
+	path = contrib/claude-mem
+	url = https://github.com/thedotmack/claude-mem
+[submodule "contrib/lottie"]
+	path = contrib/lottie
+	url = https://github.com/diffusionstudio/lottie

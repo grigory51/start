@@ -362,6 +362,18 @@ def install_skills(ctx: Ctx) -> None:
         t, linked = _mirror_skill(ctx, s, dst_root / s.name)
         total_links += t
         changed += linked
+
+    # Внешние зависимости скилов ([[skills.requirements]]): напр. локальный плеер
+    # для рендера/верификации. requirements одинаковы для всех скилов источника
+    # (прокинуты из записи) — проверяем один раз на источник, у которого есть
+    # включённый скил. Менеджер сам не ставит, только подсказывает.
+    seen_req_sources: set[str] = set()
+    for s in skills:
+        if not s.requirements or s.source in seen_req_sources:
+            continue
+        seen_req_sources.add(s.source)
+        plugins.check_requirements(ctx, s.source, s.requirements)
+
     delta = f", изменено {changed}" if changed else " — без изменений"
     sk = _plural(len(skills), "скил", "скила", "скилов")
     ln = _plural(total_links, "symlink", "symlink'а", "symlink'ов")

@@ -23,6 +23,12 @@
 #              относительно корня репо; destination — имя/путь внутри папки-зеркала
 #              скила. Нужно, когда скил зовёт файл вне своей папки (напр. plugin-root
 #              scripts/). Коллизия destination с родной записью скила — ошибка установки.
+#   requirements — список [[skills.requirements]] = {name, check, hint}: внешние
+#              зависимости скилов источника (та же схема, что у [[plugins.requirements]]).
+#              check — shell-команда проверки (rc 0 = есть), hint — как поставить.
+#              Менеджер при up проверяет и при отсутствии печатает hint (сам НЕ ставит).
+#              Применяются ко всем скилам источника; проверяются раз на источник, если
+#              включён хотя бы один его скил. Напр. локальный плеер/рантайм для рендера.
 #
 # Каждый скил в ~/.claude/skills — реальная папка-зеркало с per-file symlink'ами.
 # Имя скила = имя его папки. Конфликт имён между источниками — ошибка установки
@@ -47,6 +53,20 @@ enabled = ["*"]
 path = "contrib/blender-skills"
 enabled = ["image-to-3d", "multi-image-to-3d", "threejs-export"]
 # exclude = ["threejs-export"]
+
+# lottie — text-to-Lottie: генерация/правка Lottie/Bodymovin JSON под локальный
+# Skia Skottie player. Сабмодуль — full app (React/Vite); скилы лежат в skills/,
+# берём только text-to-lottie. Скил self-contained (references/ внутри папки).
+[[skills]]
+path = "contrib/lottie/skills"
+enabled = ["text-to-lottie"]
+  # Скил рендерит/верифицирует сцены в официальном Skia Skottie player — это app
+  # из того же сабмодуля (contrib/lottie), запускается через bun. Без bun плеер не
+  # поднять, верификация сцен невозможна. Менеджер проверяет bun и подсказывает.
+  [[skills.requirements]]
+  name = "bun"
+  check = "command -v bun"
+  hint = "curl -fsSL https://bun.sh/install | bash  (или brew install oven-sh/bun/bun). Затем плеер: cd contrib/lottie && bun install && bun dev"
 
 # --- Агенты -------------------------------------------------------------------
 
@@ -92,6 +112,25 @@ enabled = true
   name = "ast-index"
   check = "command -v ast-index"
   hint = "brew tap defendend/ast-index && brew trust defendend/ast-index && brew install ast-index"
+
+# claude-mem — персистентная память между сессиями: захват наблюдений через
+# lifecycle-хуки, AI-сжатие в summary, поиск по MCP. Плагин лежит в подкаталоге
+# plugin/ сабмодуля (marketplace.json в корне указывает source = ./plugin), поэтому
+# path — корень сабмодуля (ref: claude-mem@thedotmack). SessionStart-хук поднимает
+# worker-service на локальном порту (по умолчанию 37701; SQLite + векторный индекс),
+# рантайм — через bun. Требует node>=20 и bun — менеджер проверяет и подсказывает,
+# сам не ставит. Рантайм-deps плагина ставятся отдельно: bun install в plugin/.
+[[plugins]]
+path = "contrib/claude-mem"
+enabled = true
+  [[plugins.requirements]]
+  name = "node>=20"
+  check = "command -v node && node -e 'process.exit(+process.versions.node.split(\".\")[0]>=20?0:1)'"
+  hint = "1. Install nvm (https://github.com/nvm-sh/nvm)  2. nvm install --lts"
+  [[plugins.requirements]]
+  name = "bun"
+  check = "command -v bun"
+  hint = "curl -fsSL https://bun.sh/install | bash  (или brew install oven-sh/bun/bun)"
 
 # --- Slash-команды ------------------------------------------------------------
 #
@@ -149,9 +188,9 @@ command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
 # Зарегистрировать loose-hook (hooks/*.sh) на события CC в ~/.claude/settings.json.
 # Файл симлинкается в ~/.claude/hooks/, команда `bash "<...>"` прописывается на events.
 #
-# [[hooks]]
-# path = "hooks/notify.sh"
-# events = ["Stop", "Notification"]
+[[hooks]]
+path = "hooks/notify.sh"
+events = ["Stop", "Notification"]
 
 [[hooks]]
 path = "hooks/focus-track.sh"
