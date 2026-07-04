@@ -10,7 +10,7 @@
 #
 # Источники скилов
 # ----------------
-# Каждый источник скилов — отдельный [[skills]], включая локальную папку repo/skills.
+# Каждый источник скилов — отдельный [[skills]], включая локальную папку repo/ai/skills.
 # Порядок записей задаёт приоритет при конфликте имён (берётся первое вхождение).
 #
 #   path     — путь к папке-источнику относительно корня репо. Внутри неё каждый
@@ -47,7 +47,7 @@
 
 # Локальные скилы репо.
 [[skills]]
-path = "skills"
+path = "ai/skills"
 enabled = ["*"]
 
 [[skills]]
@@ -73,7 +73,7 @@ enabled = ["text-to-lottie"]
 
 # Локальные агенты репо. (Агенты плагинов идут через [[plugins]], не сюда.)
 [[agents]]
-path = "agents"
+path = "ai/agents"
 enabled = ["*"]
 
 # --- Плагины (нативные CC) ----------------------------------------------------
@@ -174,7 +174,7 @@ ENABLE_CLAUDEAI_MCP_SERVERS = "false"
 # менеджер снимет statusLine (по sidecar), не трогая чужой.
 
 [statusline]
-path = "statusline/statusline.mjs"   # *.mjs/*.sh относительно корня репо
+path = "ai/claude/statusline/statusline.mjs"   # *.mjs/*.sh относительно корня репо
 dest = "statusline.mjs"              # имя в ~/.claude/
 command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
   # Команда statusline требует node (файл — .mjs). Без node CC молча не запускает
@@ -190,11 +190,11 @@ command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
 # Файл симлинкается в ~/.claude/hooks/, команда `bash "<...>"` прописывается на events.
 #
 [[hooks]]
-path = "hooks/notify.sh"
+path = "ai/hooks/notify.sh"
 events = ["Stop", "Notification"]
 
 [[hooks]]
-path = "hooks/focus-track.sh"
+path = "ai/hooks/focus-track.sh"
 events = ["UserPromptSubmit"]
 
 # --- Dotfiles (симлинки в $HOME) ---------------------------------------------

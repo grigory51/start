@@ -93,7 +93,10 @@ def link(ctx: Ctx, src: Path, dst: Path, *, kind: str = "",
             return "exists"
 
         if dst.exists() or dst.is_symlink():
-            if not _backup_or_skip(ctx, dst, kind):
+            # Наш же (возможно устаревший — напр. после переезда источника в репо)
+            # symlink — переставляем без бэкапа/force. Чужой файл/симлинк — как раньше.
+            ours = dst.is_symlink() and _is_ours(_readlink(dst))
+            if not ours and not _backup_or_skip(ctx, dst, kind):
                 return "skipped"
 
     if not quiet:
@@ -386,7 +389,7 @@ def install_hooks(ctx: Ctx) -> None:
     ctx.say(f"Hooks -> {dst}/")
     if not ctx.dry_run:
         dst.mkdir(parents=True, exist_ok=True)
-    hooks_src = REPO_DIR / "hooks"
+    hooks_src = REPO_DIR / "ai" / "hooks"
     if hooks_src.is_dir():
         for f in sorted(hooks_src.glob("*.sh")):
             link(ctx, f, dst / f.name)
@@ -394,12 +397,12 @@ def install_hooks(ctx: Ctx) -> None:
 
 
 def install_claude_md(ctx: Ctx) -> None:
-    """Глобальный CLAUDE.md -> symlink на repo/CLAUDE.global.md.
+    """Глобальный CLAUDE.md -> symlink на repo/ai/claude/CLAUDE.global.md.
 
-    Грузится во всех сессиях. Управляется из репо (правь CLAUDE.global.md, не
-    ~/.claude/CLAUDE.md). Чужой существующий файл бэкапится при --force.
+    Грузится во всех сессиях. Управляется из репо (правь ai/claude/CLAUDE.global.md,
+    не ~/.claude/CLAUDE.md). Чужой существующий файл бэкапится при --force.
     """
-    src = REPO_DIR / "CLAUDE.global.md"
+    src = REPO_DIR / "ai" / "claude" / "CLAUDE.global.md"
     if not src.is_file():
         return
     ctx.say(f"CLAUDE.md -> {CLAUDE_DIR / 'CLAUDE.md'}")
