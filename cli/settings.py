@@ -26,6 +26,10 @@ from .plugins import SEED_DIR
 
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude"))
 SETTINGS = CLAUDE_DIR / "settings.json"
+# Имя файла историческое (проект назывался claude-agents). НЕ переименовываем при
+# ренейме в `start`: sidecar хранит список ранее-managed ключей settings.json —
+# сменить имя = осиротить их, cleanup чужого/stale перестанет работать до ручной
+# миграции. Файл внутренний и невидимый, менять имя смысла нет.
 SIDECAR = CLAUDE_DIR / ".claude-agents-managed.json"
 
 SEED_ENV_KEY = "CLAUDE_CODE_PLUGIN_SEED_DIR"

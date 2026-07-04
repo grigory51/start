@@ -8,7 +8,7 @@
             источник, если курсор на заголовке): правится `enabled`-список
             источника в config.toml, затем дёргается install (без сабмодулей).
 
-Запуск: `uv run claude-agents manage`.
+Запуск: `uv run start manage`.
 """
 
 from __future__ import annotations

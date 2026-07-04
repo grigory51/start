@@ -612,6 +612,32 @@ def load_env() -> dict[str, str]:
     return {str(k): str(v) for k, v in env.items()}
 
 
+def load_dotfiles() -> tuple[list[dict], list[str]]:
+    """`[[dotfiles]]` из config.toml: список {source, target} для симлинков в $HOME + warnings.
+
+    source — путь к файлу/папке относительно корня репо; target — путь назначения
+    в $HOME (поддержка ~ и абсолютных, разворачивается на этапе install). Не про
+    Claude Code — про общий сетап машины. Записи с пустым source/target
+    пропускаются с предупреждением. Секции нет — пустой список.
+    """
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    raw = base.get("dotfiles", [])
+    if not isinstance(raw, list):
+        return [], warnings
+    out: list[dict] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "").strip()
+        target = str(item.get("target") or "").strip()
+        if not source or not target:
+            warnings.append(f"[[dotfiles]] #{i}: пустой source/target — пропуск")
+            continue
+        out.append({"source": source, "target": target})
+    return out, warnings
+
+
 def load_mcp() -> tuple[list[McpServer], list[str]]:
     """MCP-серверы из [[mcp]] config.toml + warnings.
 

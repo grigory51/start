@@ -15,8 +15,13 @@ CC наполняет <seed>/{known_marketplaces.json,installed_plugins.json,cac
 Эти же команды как сайд-эффект пишут extraKnownMarketplaces + enabledPlugins в реальный
 ~/.claude/settings.json — эти ключи затем берёт под контроль cli/settings.py (sidecar).
 
-Seed — производный артефакт: полностью пересобирается на каждом `up` (gitignore .seed/).
+Seed — производный артефакт: пересобирается на каждом `up` (gitignore .seed/.seed.store).
 Требует `claude` в PATH; без него фаза плагинов пропускается с предупреждением.
+
+Double-buffer, чтобы `up` не ломал бегущие сессии: реальные буферы лежат в .seed.store/{0,1},
+а .seed — стабильный symlink на активный. Сборка идёт в НЕактивный буфер, затем .seed
+атомарно (os.replace симлинка) переключается на свежий. Живая сессия читает целый старый
+буфер до момента swap; старый буфер остаётся альтернативным (перезапишется на следующей сборке).
 """
 
 from __future__ import annotations
@@ -30,7 +35,40 @@ from pathlib import Path
 from . import config
 from .config import REPO_DIR
 
-SEED_DIR = REPO_DIR / ".seed"
+SEED_DIR = REPO_DIR / ".seed"          # стабильный путь (env CLAUDE_CODE_PLUGIN_SEED_DIR) — symlink на активный буфер
+SEED_STORE = REPO_DIR / ".seed.store"  # реальные буферы сборки (double-buffer: 0/1)
+
+
+def _pick_buffer() -> Path:
+    """Выбрать НЕактивный буфер для сборки (double-buffer 0/1).
+
+    Активный = цель текущего symlink .seed. Собираем в другой, чтобы живая сессия
+    продолжала читать целый старый буфер до атомарного swap. Первый запуск (симлинка
+    нет) → буфер "0".
+    """
+    live = None
+    if SEED_DIR.is_symlink():
+        live = Path(os.readlink(SEED_DIR)).name
+    return SEED_STORE / ("1" if live == "0" else "0")
+
+
+def _swap_seed_symlink(buf: Path) -> None:
+    """Атомарно указать .seed на buf.
+
+    Стационарно .seed — symlink: os.replace(tmp_symlink, .seed) переименовывает
+    поверх старого симлинка одним syscall (атомарно, без окна отсутствия). Разовая
+    миграция со старой схемы (.seed — реальный каталог): сносим его перед заменой.
+    """
+    tmp = SEED_DIR.parent / ".seed.swap"
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    os.symlink(buf, tmp)
+    if SEED_DIR.is_symlink():
+        os.replace(tmp, SEED_DIR)                       # атомарная замена симлинка
+    else:
+        if SEED_DIR.exists():
+            shutil.rmtree(SEED_DIR)                     # миграция со старой in-place схемы
+        os.replace(tmp, SEED_DIR)
 
 
 @dataclass
@@ -76,9 +114,10 @@ def check_requirements(ctx, ref: str, requirements) -> None:
 def build_seed(ctx) -> SeedResult:
     """Пересобрать plugin seed из всех включённых [[plugins]]-источников.
 
-    ctx — Ctx из install.py (say/do/dry_run). Полная пересборка SEED_DIR (детерминизм,
-    нет stale). Для каждого enabled-плагина: marketplace add + install. enabled=false
-    плагины в seed не ставятся (их enabledPlugins=false выставит settings-слой).
+    ctx — Ctx из install.py (say/do/dry_run). Сборка в свежий буфер + атомарный swap
+    .seed (детерминизм, нет stale, не рвёт живые сессии). Для каждого enabled-плагина:
+    marketplace add + install. enabled=false плагины в seed не ставятся (их
+    enabledPlugins=false выставит settings-слой).
 
     Возвращает SeedResult со всеми обнаруженными плагинами (для settings/sidecar) и
     списком собранных ref'ов. Если claude недоступен — пустой built + предупреждение.
@@ -110,10 +149,13 @@ def build_seed(ctx) -> SeedResult:
     for p in enabled:
         check_requirements(ctx, p.ref, p.requirements)
 
-    # Полная пересборка: сносим старый seed (наш производный каталог).
-    if SEED_DIR.exists():
-        ctx.do(f"rm -rf {SEED_DIR}", lambda: shutil.rmtree(SEED_DIR))
-    ctx.do(f"mkdir -p {SEED_DIR}", lambda: SEED_DIR.mkdir(parents=True, exist_ok=True))
+    # Double-buffer: собираем в НЕактивный буфер, живой .seed не трогаем до swap.
+    # Это не ломает бегущие сессии (они читают целый старый буфер до атомарной замены
+    # симлинка). Пересобираем только выбранный буфер (детерминизм, нет stale).
+    buf = _pick_buffer()
+    if buf.exists():
+        ctx.do(f"rm -rf {buf}", lambda: shutil.rmtree(buf))
+    ctx.do(f"mkdir -p {buf}", lambda: buf.mkdir(parents=True, exist_ok=True))
 
     for p in enabled:
         # Предупреждение про SessionStart-хуки плагина (CC выполнит их при старте).
@@ -126,14 +168,14 @@ def build_seed(ctx) -> SeedResult:
             res.built.append(p.ref)
             continue
 
-        add = _run(["claude", "plugin", "marketplace", "add", str(p.path)], SEED_DIR)
+        add = _run(["claude", "plugin", "marketplace", "add", str(p.path)], buf)
         if add.returncode != 0:
             err = (add.stderr or add.stdout).strip().splitlines()[-1:] or [""]
             ctx.say(f"  ! {p.ref}: marketplace add не удался — {err[0]}")
             ctx.errors += 1
             continue
 
-        inst = _run(["claude", "plugin", "install", p.ref, "--scope", "user"], SEED_DIR)
+        inst = _run(["claude", "plugin", "install", p.ref, "--scope", "user"], buf)
         if inst.returncode != 0:
             err = (inst.stderr or inst.stdout).strip().splitlines()[-1:] or [""]
             ctx.say(f"  ! {p.ref}: install не удался — {err[0]}")
@@ -146,7 +188,7 @@ def build_seed(ctx) -> SeedResult:
         # marketplaces/<name> -> корень плагина: probing находит marketplace.json,
         # CC грузит skills/agents/commands/hooks/MCP. Симлинк на наш же репо, seed
         # read-only → CC только читает.
-        mp_link = SEED_DIR / "marketplaces" / p.marketplace
+        mp_link = buf / "marketplaces" / p.marketplace
         mp_link.parent.mkdir(parents=True, exist_ok=True)
         if mp_link.is_symlink() or mp_link.exists():
             mp_link.unlink()
@@ -154,6 +196,9 @@ def build_seed(ctx) -> SeedResult:
 
         ctx.say(f"  + {p.ref} -> seed")
         res.built.append(p.ref)
+
+    # Атомарно переключить .seed на свежий буфер (без окна отсутствия для сессий).
+    ctx.do(f"ln -sfn {buf} {SEED_DIR}  (атомарный swap)", lambda: _swap_seed_symlink(buf))
 
     n = len(res.built)
     disabled = [p.ref for p in plugins if not p.enabled]

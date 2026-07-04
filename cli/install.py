@@ -426,59 +426,104 @@ def install_statusline(ctx: Ctx) -> None:
     ctx.say()
 
 
+def install_dotfiles(ctx: Ctx) -> None:
+    """Dotfiles ([[dotfiles]]) -> symlink'и в $HOME. Не про Claude Code — общий сетап машины.
+
+    dst строится от $HOME (в отличие от прочих install_* — те от CLAUDE_DIR). Прун
+    снятых записей НЕ делаем: итерировать/удалять в $HOME небезопасно — убрал запись
+    из config, симлинк снимаешь вручную.
+    """
+    entries, warnings = config.load_dotfiles()
+    for w in warnings:
+        ctx.say(f"  ! {w}")
+    if not entries:
+        ctx.say("  (нет записей [[dotfiles]])")
+        ctx.say()
+        return
+    for e in entries:
+        src = (REPO_DIR / e["source"]).resolve()
+        dst = Path(e["target"]).expanduser()
+        kind = "/" if src.is_dir() else ""
+        if not ctx.dry_run:
+            dst.parent.mkdir(parents=True, exist_ok=True)   # напр. ~/.config/nvim/
+        link(ctx, src, dst, kind=kind)
+    ctx.say()
+
+
+def _section(ctx: Ctx, title: str) -> None:
+    """Заголовок-разделитель домена в выводе (Claude Code / Dotfiles)."""
+    ctx.say(f"══ {title} " + "═" * max(0, 40 - len(title)))
+    ctx.say()
+
+
 def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = False,
-                skip_seed: bool = False, skip_settings: bool = False) -> int:
+                skip_seed: bool = False, skip_settings: bool = False,
+                only: str | None = None) -> int:
     """Разложить плагины (seed) + symlink'и + смержить settings. Возвращает число ошибок.
 
-    Порядок (важен для миграции skills→plugins):
+    Два домена, разделённые в выводе заголовками:
+      • Claude Code — seed + settings + agents/skills/commands/hooks/CLAUDE.md/statusline;
+      • Dotfiles    — симлинки [[dotfiles]] в $HOME (общий сетап машины).
+
+    Порядок внутри Claude Code (важен для миграции skills→plugins):
       1. seed build — собрать включённые [[plugins]] через claude CLI;
       2. settings merge — enabledPlugins + SEED_DIR + mcp + hooks (до прун-фаз symlink'ов,
          чтобы плагин был зарегистрирован раньше, чем исчезнут его старые loose-зеркала);
       3. loose-symlink'и: agents, skills (с пруном выпавшего), commands, hooks-файлы.
 
     quiet: подавить баннер. skip_seed/skip_settings: пропустить соответствующую фазу
-    (быстрый toggle loose из UI).
+    (быстрый toggle loose из UI). only: "claude" | "dotfiles" — гонять только один домен
+    (None = оба).
     """
+    do_claude = only in (None, "claude")
+    do_dotfiles = only in (None, "dotfiles")
     ctx = Ctx(dry_run, force)
     if not quiet:
         ctx.say(f"Репо:        {REPO_DIR}")
-        ctx.say(f"Назначение:  {CLAUDE_DIR}")
+        ctx.say(f"Назначение:  {CLAUDE_DIR}  |  $HOME")
         if ctx.dry_run:
             ctx.say("(dry-run: изменения не применяются)")
         ctx.say()
 
-    # 1. Плагины → seed (включённые [[plugins]] собираются самим claude CLI).
-    plugin_list = config.load_plugins()
-    if not skip_seed:
-        seed_res = plugins.build_seed(ctx)
-        plugin_list = seed_res.plugins
+    if do_claude:
+        _section(ctx, "Claude Code")
+        # 1. Плагины → seed (включённые [[plugins]] собираются самим claude CLI).
+        plugin_list = config.load_plugins()
+        if not skip_seed:
+            seed_res = plugins.build_seed(ctx)
+            plugin_list = seed_res.plugins
 
-    # 2. Settings merge (enabledPlugins/SEED_DIR/mcp/hooks) — до прун-фаз symlink'ов.
-    if not skip_settings:
-        ctx.errors += settings.merge_into_settings(plugin_list, dry_run=dry_run)
+        # 2. Settings merge (enabledPlugins/SEED_DIR/mcp/hooks) — до прун-фаз symlink'ов.
+        if not skip_settings:
+            ctx.errors += settings.merge_into_settings(plugin_list, dry_run=dry_run)
 
-    # 3. Loose-symlink'и.
-    install_agents(ctx)
-    try:
-        install_skills(ctx)
-    except SkillCollisionError as e:
-        # Коллизия [[skills.symlinks]] — фатально для skills-фазы: прерываем
-        # раскладку скилов. Хуки всё ещё разложим. Ненулевой ctx.errors → exit 1.
-        ctx.say(f"  ! {e}")
-        ctx.errors += 1
-        ctx.say()
-    install_commands(ctx)
-    install_hooks(ctx)
-    install_claude_md(ctx)
-    install_statusline(ctx)
+        # 3. Loose-symlink'и.
+        install_agents(ctx)
+        try:
+            install_skills(ctx)
+        except SkillCollisionError as e:
+            # Коллизия [[skills.symlinks]] — фатально для skills-фазы: прерываем
+            # раскладку скилов. Хуки всё ещё разложим. Ненулевой ctx.errors → exit 1.
+            ctx.say(f"  ! {e}")
+            ctx.errors += 1
+            ctx.say()
+        install_commands(ctx)
+        install_hooks(ctx)
+        install_claude_md(ctx)
+        install_statusline(ctx)
+
+    if do_dotfiles:
+        _section(ctx, "Dotfiles")
+        install_dotfiles(ctx)
 
     if not quiet:
         if ctx.errors:
             ctx.say(f"Готово с предупреждениями: {ctx.errors}.")
         else:
             ctx.say("Готово.")
-        ctx.say()
-        ctx.say("Запуск оркестратора:  claude --agent architect")
-        ctx.say("Список агентов:        /agents  (внутри сессии Claude Code)")
-        ctx.say("Плагины:              /plugin  (после перезапуска claude — seed читается на старте)")
+        if do_claude:
+            ctx.say()
+            ctx.say("Запуск оркестратора:  claude --agent architect")
+            ctx.say("Список агентов:        /agents  (внутри сессии Claude Code)")
+            ctx.say("Плагины:              /plugin  (после перезапуска claude — seed читается на старте)")
     return ctx.errors

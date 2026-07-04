@@ -1,7 +1,7 @@
 [project]
-name = "claude-agents"
+name = "start"
 version = "0.1.0"
-description = "Линковка персональных агентов, навыков и hooks в ~/.claude + TUI для управления"
+description = "Переносимый сетап машины: конфиг Claude Code + dotfiles симлинками из репо, + TUI"
 requires-python = ">=3.11"
 dependencies = [
     "textual>=0.80",
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-claude-agents = "cli.__main__:main"
+start = "cli.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

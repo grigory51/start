@@ -12,7 +12,9 @@ __pycache__/
 config.local.toml
 
 # plugin seed (производный — пересобирается на каждом `make up`)
-.seed/
+# .seed — стабильный symlink на активный буфер; .seed.store/ — сами буферы (double-buffer)
+.seed
+.seed.store/
 
 # OMC runtime (legacy, если вдруг создаётся)
 .omc/

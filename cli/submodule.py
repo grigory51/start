@@ -1,6 +1,6 @@
 """submodule.py — добавление git-сабмодуля в contrib/ + регистрация source.
 
-Логика общая для CLI (`claude-agents add-submodule`) и TUI (модалка в manage).
+Логика общая для CLI (`start add-submodule`) и TUI (модалка в manage).
 
 Шаги add_submodule:
   1. git submodule add <url> contrib/<name>

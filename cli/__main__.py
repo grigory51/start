@@ -1,6 +1,6 @@
 """Точка входа CLI. Подкоманды: up, ui.
 
-Запуск: `uv run claude-agents <команда>` (или `python -m cli`).
+Запуск: `uv run start <команда>` (или `python -m cli`).
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ def _cmd_up(args: argparse.Namespace) -> int:
         skip_submodules=args.no_submodules,
         skip_seed=args.no_seed,
         skip_settings=args.no_settings,
+        only=args.only,
     )
     return 1 if errors else 0
 
@@ -64,8 +65,8 @@ def _cmd_add_submodule(args: argparse.Namespace) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        prog="claude-agents",
-        description="Линковка персональных агентов/навыков/hooks в ~/.claude и TUI.",
+        prog="start",
+        description="Переносимый сетап машины: конфиг Claude Code + dotfiles симлинками из репо, и TUI.",
     )
     sub = ap.add_subparsers(dest="cmd")
 
@@ -79,6 +80,8 @@ def main() -> int:
                     help="пропустить сборку plugin seed")
     up.add_argument("--no-settings", action="store_true",
                     help="пропустить merge ~/.claude/settings.json")
+    up.add_argument("--only", choices=["claude", "dotfiles"], default=None,
+                    help="гонять только один домен: claude (~/.claude) или dotfiles ($HOME)")
     up.set_defaults(func=_cmd_up)
 
     st = sub.add_parser("settings", help="merge managed-ключей в ~/.claude/settings.json (sidecar)")

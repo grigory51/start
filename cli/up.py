@@ -23,15 +23,18 @@ def update_submodules(*, quiet: bool = False) -> int:
 
 def run_up(*, dry_run: bool = False, force: bool = False, quiet: bool = False,
            skip_submodules: bool = False, skip_seed: bool = False,
-           skip_settings: bool = False) -> int:
+           skip_settings: bool = False, only: str | None = None) -> int:
     """Сабмодули + install (seed + symlink + settings). Возвращает число ошибок install.
 
     skip_submodules: пропустить git-шаг. skip_seed/skip_settings: пропустить сборку
-    плагинов / merge settings (для быстрого toggle loose-скилов из UI).
+    плагинов / merge settings (для быстрого toggle loose-скилов из UI). only:
+    "claude" | "dotfiles" — гонять только один домен (None = оба); при only="dotfiles"
+    git-шаг не нужен (dotfiles в репо, не в сабмодулях).
     """
-    if not skip_submodules and not dry_run:
+    need_submodules = not skip_submodules and not dry_run and only != "dotfiles"
+    if need_submodules:
         rc = update_submodules(quiet=quiet)
         if rc != 0 and not quiet:
             print(f"  ! git submodule update вернул {rc}")
     return run_install(dry_run=dry_run, force=force, quiet=quiet,
-                       skip_seed=skip_seed, skip_settings=skip_settings)
+                       skip_seed=skip_seed, skip_settings=skip_settings, only=only)
