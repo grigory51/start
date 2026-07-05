@@ -20,7 +20,7 @@
  * Печатает одну строку. Всегда exit 0 — статусбар не должен ронять сессию.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, lstatSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,7 @@ const C = {
   bold: "\x1b[1m",
   dim: "\x1b[2m",
   cyan: "\x1b[36m",
+  magenta: "\x1b[38;2;180;140;255m",  // бейджи активных плагинов (HUD)
   green: "\x1b[38;2;0;255;0m",     // чистый зелёный (как края heat-шкалы)
   yellow: "\x1b[38;2;255;255;0m",  // чистый жёлтый
   red: "\x1b[38;2;255;0;0m",       // чистый красный
@@ -132,6 +133,43 @@ function focusElapsed() {
   return Math.floor((now - start * 1000) / 60000);
 }
 
+// HUD активных плагинов, влияющих на сессию (caveman, ponytail и т.п.). Такие плагины
+// на время активности пишут флаг $CLAUDE_CONFIG_DIR/.<name>-active (первая строка —
+// режим) и по нему рисуют свой бейдж. Но statusLine у CC ОДИН — наш, — поэтому их
+// собственные бейджи не видны. Собираем их сами по той же конвенции: сканируем
+// флаг-файлы .<name>-active и рисуем [NAME] / [NAME:MODE]. Так любой плагин с этой
+// конвенцией появляется в HUD без правок здесь.
+// Безопасность (файлы пишут сторонние плагины): имя файла ограничено регэкспом,
+// символьные ссылки пропускаем, содержимое режима чистим до [a-z0-9-] и обрезаем —
+// чтобы чужой файл не впрыснул ANSI-escape в терминал (ср. caveman-statusline.sh).
+function pluginBadges() {
+  const base = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  let names;
+  try {
+    names = readdirSync(base);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of names.sort()) {
+    const m = /^\.([a-z0-9-]+)-active$/.exec(f);
+    if (!m) continue;
+    let mode;
+    try {
+      const p = join(base, f);
+      if (lstatSync(p).isSymbolicLink()) continue;  // не рендерим байты из чужого таргета
+      mode = readFileSync(p, "utf8").split("\n")[0].trim().toLowerCase();
+    } catch {
+      continue;
+    }
+    mode = mode.replace(/[^a-z0-9-]/g, "").slice(0, 16);  // анти-инъекция ANSI
+    const name = m[1].toUpperCase();
+    const label = !mode || mode === "full" ? name : `${name}:${mode.toUpperCase()}`;
+    out.push(`${C.dim}[${C.reset}${C.magenta}${label}${C.reset}${C.dim}]${C.reset}`);
+  }
+  return out;
+}
+
 // Ширина терминала. CC запускает statusline child-процессом с piped stdout, поэтому
 // process.stdout.columns/$COLUMNS/tput не работают (см. issue anthropics/claude-code
 // #22115, #5430). Обходим: поднимаемся по предкам процесса до реального tty (его держит
@@ -176,6 +214,10 @@ function visibleWidth(s) {
 function main() {
   const d = read();
   const parts = [];
+
+  // HUD активных плагинов (caveman/ponytail/…) — впереди, чтобы сразу было видно режим.
+  const badges = pluginBadges();
+  if (badges.length) parts.push(badges.join(" "));
 
   // Бренд + модель.
   const model = d?.model?.display_name;

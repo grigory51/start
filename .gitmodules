@@ -19,3 +19,9 @@
 [submodule "contrib/lottie"]
 	path = contrib/lottie
 	url = https://github.com/diffusionstudio/lottie
+[submodule "contrib/text-to-cad"]
+	path = contrib/text-to-cad
+	url = https://github.com/earthtojake/text-to-cad
+[submodule "contrib/ponytail"]
+	path = contrib/ponytail
+	url = https://github.com/DietrichGebert/ponytail

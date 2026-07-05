@@ -100,7 +100,7 @@ enabled = true
 
 [[plugins]]
 path = "contrib/caveman"
-enabled = true
+enabled = false
 
 # ast-index — структурный поиск по коду (символы/вызовы/иерархии) вместо grep.
 # Плагин даёт скил/правила/команды; сам бинарь ast-index ставится отдельно (см.
@@ -152,6 +152,13 @@ enabled = true
 #
 # monium_mcp — нужен только на рабочей машине (Аркадия). В git выключен; на нужной
 # машине включается: config.local.toml → [local.mcp] monium_mcp = true (или `t` в TUI).
+[[plugins]]
+path = "contrib/text-to-cad"
+enabled = true
+
+[[plugins]]
+path = "contrib/ponytail"
+enabled = true
 [[mcp]]
 name = "monium_mcp"
 enabled = false
@@ -209,3 +216,4 @@ events = ["UserPromptSubmit"]
 [[dotfiles]]
 source = "dotfiles/vimrc"
 target = "~/.vimrc"
+

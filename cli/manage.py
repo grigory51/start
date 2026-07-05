@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import io
+import os
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -33,6 +34,43 @@ from .up import run_up
 def _truncate(s: str, n: int) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _state_cells(enabled: bool, enabled_base: bool,
+                 enabled_local: bool | None) -> tuple[str, str, str]:
+    """Три ячейки статуса строки: лампочка (итог) + глобально + локально.
+
+    Лампочка 💡/○ — эффективный статус (итог с учётом оверрайда). «Гл» — значение
+    из config.toml, «Лок» — из config.local.toml (— если оверрайда нет). Локальный
+    оверрайд подсвечиваем cyan: именно он определяет итог, маскируя глобальное значение.
+    """
+    lamp = "💡" if enabled else "[dim]○[/]"
+    g = "[green]вкл[/]" if enabled_base else "[dim]выкл[/]"
+    if enabled_local is None:
+        loc = "[dim]—[/]"
+    else:
+        loc = "[cyan]вкл[/]" if enabled_local else "[cyan]выкл[/]"
+    return lamp, g, loc
+
+
+def _clear_plugin_flag(plugin: str) -> None:
+    """Best-effort снять stale active-флаг плагина при его выключении.
+
+    Плагины вроде caveman/ponytail держат $CLAUDE_CONFIG_DIR/.<plugin>-active, пока
+    активны, и по нему statusline рисует HUD-бейдж. После выключения их SessionStart-хук
+    больше не запускается и флаг сам не убирается — снимаем его тут, чтобы бейдж пропал
+    сразу, а не висел до перезапуска сессии (которая бы его и так не переписала).
+    ponytail: имя флага — конвенция .<plugin>-active, эвристика; symlink/чужое не трогаем.
+    """
+    base = Path(os.environ.get("CLAUDE_CONFIG_DIR")
+                or os.environ.get("CLAUDE_HOME")
+                or Path.home() / ".claude")
+    flag = base / f".{plugin}-active"
+    try:
+        if flag.is_file() and not flag.is_symlink():
+            flag.unlink()
+    except OSError:
+        pass
 
 
 class ContentScreen(ModalScreen):
@@ -155,7 +193,8 @@ class PluginsPane(TabPane):
 
     `t`/Space — toggle ЛОКАЛЬНО (config.local.toml, эта машина); `g` — ГЛОБАЛЬНО
     (config.toml, для всех машин). Оба пересобирают seed + мержат settings. Enter
-    открывает plugin.json. ⚠ — SessionStart-хуки. [L] — есть локальный оверрайд.
+    открывает plugin.json. 💡 — итоговый статус; «Гл»/«Лок» — глобально/локально
+    (— = локального оверрайда нет). ⚠ — SessionStart-хуки.
     """
 
     BINDINGS = [
@@ -173,8 +212,10 @@ class PluginsPane(TabPane):
 
     def on_mount(self) -> None:
         table = self.query_one("#plugins-table", DataTable)
-        table.add_column("◉", width=3)
-        table.add_column("Плагин (plugin@marketplace)", width=44)
+        table.add_column("💡", width=3)
+        table.add_column("Плагин (plugin@marketplace)", width=40)
+        table.add_column("Гл", width=5)
+        table.add_column("Лок", width=5)
         table.add_column("⚠", width=3)
         table.add_column("Описание")
         self._reload()
@@ -186,12 +227,10 @@ class PluginsPane(TabPane):
         self._row_map = []
         plugins = config.load_plugins()
         for p in plugins:
-            mark = "[green]●[/]" if p.enabled else "[dim]○[/]"
+            lamp, g, loc = _state_cells(p.enabled, p.enabled_base, p.enabled_local)
             ref = p.ref if p.enabled else f"[dim]{p.ref}[/]"
-            if p.enabled_local is not None:
-                ref += " [cyan][L][/]"  # локальный оверрайд (config.local.toml)
             warn = "[yellow]⚠[/]" if p.session_start_hooks else ""
-            table.add_row(mark, ref, warn, _truncate(p.description, 70))
+            table.add_row(lamp, ref, g, loc, warn, _truncate(p.description, 55))
             self._row_map.append(p)
         if self._row_map:
             table.move_cursor(row=min(prev, len(self._row_map) - 1))
@@ -220,6 +259,8 @@ class PluginsPane(TabPane):
             return
         new_enabled = not p.enabled
         config.set_plugin_enabled_local(p.source, enabled=new_enabled)
+        if not new_enabled:  # эффективно выключен → снять stale HUD-флаг
+            _clear_plugin_flag(p.plugin)
         verb = "включён" if new_enabled else "выключен"
         self._status(f"{p.ref} {verb} локально — пересобираю seed…")
         self._rebuild_worker(f"{p.ref} {verb} (локально)")
@@ -230,6 +271,10 @@ class PluginsPane(TabPane):
             return
         new_enabled = not p.enabled_base
         config.set_plugin_enabled(p.source, enabled=new_enabled)
+        # Итог с учётом локального оверрайда: он маскирует глобальное значение.
+        effective = p.enabled_local if p.enabled_local is not None else new_enabled
+        if not effective:  # эффективно выключен → снять stale HUD-флаг
+            _clear_plugin_flag(p.plugin)
         verb = "включён" if new_enabled else "выключен"
         masked = " (но локальный оверрайд активен)" if p.enabled_local is not None else ""
         self._status(f"{p.ref} {verb} глобально{masked} — пересобираю seed…")
@@ -256,7 +301,8 @@ class McpPane(TabPane):
     """Просмотр + toggle MCP-серверов ([[mcp]] → ~/.claude.json user-scope).
 
     `t`/Space — toggle ЛОКАЛЬНО (config.local.toml); `g` — ГЛОБАЛЬНО (config.toml).
-    Оба мержат ~/.claude.json. Enter показывает JSON-спеку сервера. [L] — локальный оверрайд.
+    Оба мержат ~/.claude.json. Enter показывает JSON-спеку сервера. 💡 — итоговый
+    статус; «Гл»/«Лок» — глобально/локально (— = локального оверрайда нет).
     """
 
     BINDINGS = [
@@ -274,8 +320,10 @@ class McpPane(TabPane):
 
     def on_mount(self) -> None:
         table = self.query_one("#mcp-table", DataTable)
-        table.add_column("◉", width=3)
-        table.add_column("MCP", width=28)
+        table.add_column("💡", width=3)
+        table.add_column("MCP", width=24)
+        table.add_column("Гл", width=5)
+        table.add_column("Лок", width=5)
         table.add_column("Команда / URL")
         self._reload()
 
@@ -286,14 +334,12 @@ class McpPane(TabPane):
         self._row_map = []
         mcp, _ = config.load_mcp()
         for m in mcp:
-            mark = "[green]●[/]" if m.enabled else "[dim]○[/]"
+            lamp, g, loc = _state_cells(m.enabled, m.enabled_base, m.enabled_local)
             name = m.name if m.enabled else f"[dim]{m.name}[/]"
-            if m.enabled_local is not None:
-                name += " [cyan][L][/]"
             srv = m.server or {}
             desc = srv.get("command", "") and (srv["command"] + " " + " ".join(srv.get("args", [])))
             desc = desc or srv.get("url", "")
-            table.add_row(mark, name, _truncate(desc, 60))
+            table.add_row(lamp, name, g, loc, _truncate(desc, 55))
             self._row_map.append(m)
         if self._row_map:
             table.move_cursor(row=min(prev, len(self._row_map) - 1))
