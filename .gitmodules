@@ -25,3 +25,6 @@
 [submodule "contrib/ponytail"]
 	path = contrib/ponytail
 	url = https://github.com/DietrichGebert/ponytail
+[submodule "contrib/ui-ux-pro-max-skill"]
+	path = contrib/ui-ux-pro-max-skill
+	url = https://github.com/nextlevelbuilder/ui-ux-pro-max-skill

@@ -217,3 +217,7 @@ events = ["UserPromptSubmit"]
 source = "dotfiles/vimrc"
 target = "~/.vimrc"
 
+
+[[plugins]]
+path = "contrib/ui-ux-pro-max-skill"
+enabled = true
