@@ -171,6 +171,19 @@ def _load_doc(path: Path, warnings: list[str]) -> dict:
         return {}
 
 
+def _claude(doc: dict) -> dict:
+    """Суб-таблица [claude] из config.toml ({} если нет). Домен Claude (~/.claude):
+    skills/agents/plugins/commands/mcp/hooks/env/statusline."""
+    c = doc.get("claude")
+    return c if isinstance(c, dict) else {}
+
+
+def _files(doc: dict) -> dict:
+    """Суб-таблица [files] из config.toml ({} если нет). Домен Files ($HOME): dotfiles."""
+    f = doc.get("files")
+    return f if isinstance(f, dict) else {}
+
+
 def _entries(doc: dict, fname: str, warnings: list[str], key: str = "skills") -> list[dict]:
     """[[key]] из документа, отфильтрованные по наличию path (key: skills/agents)."""
     out: list[dict] = []
@@ -291,7 +304,7 @@ def load() -> ConfigResult:
         return res
 
     seen: dict[str, Skill] = {}
-    for rel, entry in _sources(base, res.warnings):
+    for rel, entry in _sources(_claude(base), res.warnings):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             res.warnings.append(
@@ -347,7 +360,7 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
     lsec = _load_local(warnings).get("agents", {})
 
     seen: dict[str, Agent] = {}
-    for rel, entry in _sources(base, warnings, key="agents"):
+    for rel, entry in _sources(_claude(base), warnings, key="agents"):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             warnings.append(
@@ -490,7 +503,7 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
     lsec = _load_local(warnings).get("plugins", {})
 
     seen: dict[str, Plugin] = {}
-    for rel, entry in _sources(base, warnings, key="plugins"):
+    for rel, entry in _sources(_claude(base), warnings, key="plugins"):
         root = (REPO_DIR / rel).resolve()
         if not (root / ".claude-plugin").is_dir():
             warnings.append(
@@ -540,7 +553,7 @@ def _discover_commands() -> tuple[list[Command], list[str]]:
     lsec = _load_local(warnings).get("commands", {})
 
     seen: dict[str, Command] = {}
-    for rel, entry in _sources(base, warnings, key="commands"):
+    for rel, entry in _sources(_claude(base), warnings, key="commands"):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             warnings.append(f"источник команд не найден: {rel}")
@@ -585,7 +598,7 @@ def load_statusline() -> dict | None:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    sl = base.get("statusline")
+    sl = _claude(base).get("statusline")
     if not isinstance(sl, dict):
         return None
     path = (sl.get("path") or "").strip()
@@ -606,23 +619,26 @@ def load_env() -> dict[str, str]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    env = base.get("env", {})
+    env = _claude(base).get("env", {})
     if not isinstance(env, dict):
         return {}
     return {str(k): str(v) for k, v in env.items()}
 
 
 def load_dotfiles() -> tuple[list[dict], list[str]]:
-    """`[[dotfiles]]` из config.toml: список {source, target} для симлинков в $HOME + warnings.
+    """`[[files.dotfiles]]` из config.toml: список {source, target?, posthook?} + warnings.
 
-    source — путь к файлу/папке относительно корня репо; target — путь назначения
-    в $HOME (поддержка ~ и абсолютных, разворачивается на этапе install). Не про
-    Claude Code — про общий сетап машины. Записи с пустым source/target
-    пропускаются с предупреждением. Секции нет — пустой список.
+    source — путь к файлу/папке относительно корня репо (обязателен); target — путь
+    назначения в $HOME (поддержка ~ и абсолютных, разворачивается на этапе install;
+    опционален — без него симлинк не ставится); posthook — shell-команда, выполняемая
+    после раскладки записи (опциональна; env SOURCE/TARGET, см. cli/files.py). Не про
+    Claude Code — про общий сетап машины. Запись без source, либо без target и без
+    posthook (ничего бы не сделала), пропускается с предупреждением. Секции нет —
+    пустой список.
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    raw = base.get("dotfiles", [])
+    raw = _files(base).get("dotfiles", [])
     if not isinstance(raw, list):
         return [], warnings
     out: list[dict] = []
@@ -631,10 +647,15 @@ def load_dotfiles() -> tuple[list[dict], list[str]]:
             continue
         source = str(item.get("source") or "").strip()
         target = str(item.get("target") or "").strip()
-        if not source or not target:
-            warnings.append(f"[[dotfiles]] #{i}: пустой source/target — пропуск")
+        posthook = str(item.get("posthook") or "").strip()
+        if not source:
+            warnings.append(f"[[files.dotfiles]] #{i}: пустой source — пропуск")
             continue
-        out.append({"source": source, "target": target})
+        if not target and not posthook:
+            warnings.append(
+                f"[[files.dotfiles]] #{i}: нет ни target, ни posthook — пропуск")
+            continue
+        out.append({"source": source, "target": target, "posthook": posthook})
     return out, warnings
 
 
@@ -650,7 +671,7 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
     lsec = _load_local(warnings).get("mcp", {})
 
     seen: dict[str, McpServer] = {}
-    for entry in base.get("mcp", []):
+    for entry in _claude(base).get("mcp", []):
         name = (entry.get("name") or "").strip()
         if not name:
             warnings.append(f"[[mcp]] без name в {CONFIG.name} — пропуск")
@@ -676,8 +697,27 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
 
 # --- запись (toggle enabled) --------------------------------------------------
 
+def _claude_aot(doc, key):
+    """Найти/создать array-of-tables [[claude.<key>]] в tomlkit-документе.
+
+    Домен Claude вложен в таблицу [claude] (см. _claude/_files). Создаёт таблицу
+    [claude] и вложенный AoT при отсутствии; комментарии/форматирование сохраняются.
+    """
+    import tomlkit
+
+    claude = doc.get("claude")
+    if claude is None:
+        claude = tomlkit.table()
+        doc["claude"] = claude
+    aot = claude.get(key)
+    if aot is None:
+        aot = tomlkit.aot()
+        claude[key] = aot
+    return aot
+
+
 def _write_enabled(source: str, spec: list[str]) -> None:
-    """Записать `enabled = spec` в [[skills]] с path=source в версионный config.toml.
+    """Записать `enabled = spec` в [[claude.skills]] с path=source в версионный config.toml.
 
     Правит существующую запись источника (она всегда есть — источники версионные);
     комментарии и форматирование сохраняются (tomlkit). Если записи нет — создаёт.
@@ -686,10 +726,7 @@ def _write_enabled(source: str, spec: list[str]) -> None:
 
     doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
 
-    skills = doc.get("skills")
-    if skills is None:
-        skills = tomlkit.aot()
-        doc["skills"] = skills
+    skills = _claude_aot(doc, "skills")
 
     target = None
     for tbl in skills:
@@ -745,14 +782,14 @@ def set_source_enabled(source: str, enabled: bool) -> None:
 
 
 def source_paths() -> set[str]:
-    """Все path из [[skills]] базового config.toml (для проверки дублей)."""
+    """Все path из [[claude.skills]] базового config.toml (для проверки дублей)."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    return {e["path"] for e in _entries(base, CONFIG.name, warnings, key="skills")}
+    return {e["path"] for e in _entries(_claude(base), CONFIG.name, warnings, key="skills")}
 
 
 def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
-    """Добавить [[skills]] с данным path в версионный config.toml (tomlkit).
+    """Добавить [[claude.skills]] с данным path в версионный config.toml (tomlkit).
 
     Добавление сабмодуля — версионное изменение (как запись в .gitmodules), пишем
     в config.toml. Комментарии/форматирование
@@ -767,10 +804,10 @@ def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
     if rel_path in source_paths():
         return False
 
-    # Рендерим новый [[skills]] как текст и дописываем в конец файла. tomlkit
-    # при append в AoT кладёт отбивку внутрь header'а ([[skills]] + пустая строка),
-    # что ломает выравнивание; текстовый append даёт ровно тот же стиль, что в base.
-    block = ("\n[[skills]]\n"
+    # Рендерим новый [[claude.skills]] как текст и дописываем в конец файла. tomlkit
+    # при append в AoT кладёт отбивку внутрь header'а ([[claude.skills]] + пустая
+    # строка), что ломает выравнивание; текстовый append даёт ровно тот же стиль, что в base.
+    block = ("\n[[claude.skills]]\n"
              f'path = "{rel_path}"\n'
              'enabled = ["*"]\n')
     if exclude:
@@ -786,14 +823,14 @@ def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
 # --- запись (плагины) ---------------------------------------------------------
 
 def plugin_source_paths() -> set[str]:
-    """Все path из [[plugins]] базового config.toml (для проверки дублей)."""
+    """Все path из [[claude.plugins]] базового config.toml (для проверки дублей)."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    return {e["path"] for e in _entries(base, CONFIG.name, warnings, key="plugins")}
+    return {e["path"] for e in _entries(_claude(base), CONFIG.name, warnings, key="plugins")}
 
 
 def add_plugin_source(rel_path: str) -> bool:
-    """Добавить [[plugins]] с данным path в версионный config.toml.
+    """Добавить [[claude.plugins]] с данным path в версионный config.toml.
 
     Текстовый append (как add_source) — сохраняет стиль файла. Дубль path → False.
     Новый плагин включён (enabled = true).
@@ -801,7 +838,7 @@ def add_plugin_source(rel_path: str) -> bool:
     if rel_path in plugin_source_paths():
         return False
 
-    block = ("\n[[plugins]]\n"
+    block = ("\n[[claude.plugins]]\n"
              f'path = "{rel_path}"\n'
              'enabled = true\n')
     existing = CONFIG.read_text() if CONFIG.is_file() else ""
@@ -820,10 +857,7 @@ def set_plugin_enabled(source: str, enabled: bool) -> None:
     import tomlkit
 
     doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
-    plugins = doc.get("plugins")
-    if plugins is None:
-        plugins = tomlkit.aot()
-        doc["plugins"] = plugins
+    plugins = _claude_aot(doc, "plugins")
 
     target = None
     for tbl in plugins:
@@ -844,10 +878,7 @@ def set_mcp_enabled(name: str, enabled: bool) -> None:
     import tomlkit
 
     doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
-    mcp = doc.get("mcp")
-    if mcp is None:
-        mcp = tomlkit.aot()
-        doc["mcp"] = mcp
+    mcp = _claude_aot(doc, "mcp")
     target = None
     for tbl in mcp:
         if tbl.get("name") == name:

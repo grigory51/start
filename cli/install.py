@@ -1,15 +1,13 @@
-"""install.py — раскладывает symlink'и агентов/навыков/hooks в ~/.claude.
+"""install.py — общая link-машинерия + оркестратор раскладки symlink'ов.
 
-Раскладка:
-  agents  — ~/.claude/agents это РЕАЛЬНАЯ папка с per-file symlink'ами.
-            Источники берутся из [[agents]] в config.toml (репо + contrib).
-            Per-file, чтобы смешивать агентов из разных источников в одной папке.
-  skills  — ~/.claude/skills это РЕАЛЬНАЯ папка; каждый скил <name>/ — тоже
-            РЕАЛЬНАЯ папка-зеркало с per-file symlink'ами на записи верхнего
-            уровня source-папки скила + доп. symlink'и из [[skills.symlinks]]
-            (напр. plugin-root scripts/). Источники и enabled — из config.toml.
-  hooks   — per-file symlink в ~/.claude/hooks/ (папку не трогаем: там лежат
-            сторонние хуки не из репо).
+Здесь только переиспользуемые примитивы (Ctx, link, ensure_real_dir, …) и
+оркестратор run_install. Доменные шаги вынесены:
+  • Claude (~/.claude) — cli/claude.py: agents/skills/commands/hooks/CLAUDE.md/rules/statusline;
+  • Files  ($HOME)     — cli/files.py: dotfiles ([[dotfiles]]).
+
+Общие свойства раскладки: реальные папки под per-file/per-entry symlink'и (чтобы
+смешивать источники и не перетирать чужое), автоматическая миграция старой схемы
+folder-symlink → реальная папка (ensure_real_dir), прун наших устаревших symlink'ов.
 """
 
 from __future__ import annotations
@@ -125,32 +123,6 @@ def _is_ours(p: Path) -> bool:
         return False
 
 
-class SkillCollisionError(Exception):
-    """destination из [[skills.symlinks]] совпал с реальной записью скила.
-
-    Ошибка конфига: доп. symlink перекрыл бы родной файл/папку скила. Прерывает
-    раскладку скилов (перехват в run_install)."""
-
-
-def _is_our_mirror(d: Path) -> bool:
-    """d — наше зеркало скила: реальная папка, внутри только наши symlink'и.
-
-    Защита от сноса чужой реальной папки в ~/.claude/skills."""
-    if not d.is_dir() or d.is_symlink():
-        return False
-    for child in d.iterdir():
-        if not (child.is_symlink() and _is_ours(_readlink(child))):
-            return False
-    return True
-
-
-def _rmtree_mirror(d: Path) -> None:
-    """Снести папку-зеркало: unlink наших symlink'ов, затем rmdir (без рекурсии)."""
-    for child in d.iterdir():
-        child.unlink()
-    d.rmdir()
-
-
 # --- миграция folder-symlink -> реальная папка --------------------------------
 
 def ensure_real_dir(ctx: Ctx, dst: Path) -> tuple[bool, bool]:
@@ -190,271 +162,8 @@ def ensure_real_dir(ctx: Ctx, dst: Path) -> tuple[bool, bool]:
     return True, migrated
 
 
-# --- сборка ---------------------------------------------------------------------
-
-def install_agents(ctx: Ctx) -> None:
-    dst_root = CLAUDE_DIR / "agents"
-    ctx.say(f"Агенты -> {dst_root}/  (per-file symlink)")
-    if not ctx.dry_run:
-        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Миграция старой схемы (folder-symlink ~/.claude/agents -> repo/agents)
-    # в реальную папку под per-file линки. Тот же механизм, что у скилов.
-    ok, migrated = ensure_real_dir(ctx, dst_root)
-    if not ok:
-        ctx.say()
-        return
-
-    agents, warnings = config._discover_agents()
-    for w in warnings:
-        ctx.say(f"  ! {w}")
-        ctx.errors += 1
-
-    wanted = {a.name + ".md" for a in agents}
-
-    # Убрать наши устаревшие symlink'и (агент выпал из конфига/репо).
-    # Пропускаем, если папку только что освободили (мигрировали).
-    if not migrated and dst_root.is_dir() and not dst_root.is_symlink():
-        for entry in sorted(dst_root.iterdir()):
-            if entry.is_symlink() and _is_ours(_readlink(entry)) and entry.name not in wanted:
-                ctx.say(f"  - {entry.name} больше не активен — удаляю symlink")
-                ctx.do(f"rm {entry}", entry.unlink)
-
-    changed = 0
-    for a in agents:
-        st = link(ctx, a.path, dst_root / (a.name + ".md"), assume_absent=migrated, quiet=True)
-        changed += st == "linked"
-    delta = f", изменено {changed}" if changed else " — без изменений"
-    ag = _plural(len(agents), "агент", "агента", "агентов")
-    ctx.say(f"  Итого: {ag}{delta}.")
-    ctx.say()
-
-
-def install_commands(ctx: Ctx) -> None:
-    """Slash-команды -> ~/.claude/commands/ (per-file symlink). Зеркало install_agents."""
-    dst_root = CLAUDE_DIR / "commands"
-    commands, warnings = config._discover_commands()
-    if not commands and not warnings:
-        return  # нет [[commands]] — ничего не печатаем
-    ctx.say(f"Команды -> {dst_root}/  (per-file symlink)")
-    if not ctx.dry_run:
-        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
-
-    ok, migrated = ensure_real_dir(ctx, dst_root)
-    if not ok:
-        ctx.say()
-        return
-
-    for w in warnings:
-        ctx.say(f"  ! {w}")
-        ctx.errors += 1
-
-    wanted = {c.name + ".md" for c in commands}
-
-    if not migrated and dst_root.is_dir() and not dst_root.is_symlink():
-        for entry in sorted(dst_root.iterdir()):
-            if entry.is_symlink() and _is_ours(_readlink(entry)) and entry.name not in wanted:
-                ctx.say(f"  - {entry.name} больше не активна — удаляю symlink")
-                ctx.do(f"rm {entry}", entry.unlink)
-
-    changed = 0
-    for c in commands:
-        st = link(ctx, c.path, dst_root / (c.name + ".md"), assume_absent=migrated, quiet=True)
-        changed += st == "linked"
-    delta = f", изменено {changed}" if changed else " — без изменений"
-    cm = _plural(len(commands), "команда", "команды", "команд")
-    ctx.say(f"  Итого: {cm}{delta}.")
-    ctx.say()
-
-
-def _mirror_skill(ctx: Ctx, skill: config.Skill, dst: Path) -> tuple[int, int]:
-    """Разложить per-file зеркало одного скила в dst (реальная папка).
-
-    На каждую запись верхнего уровня source-папки скила — отдельный symlink
-    (файл или папка как dir-symlink, без рекурсии внутрь). Плюс доп. symlink'и
-    из [[skills.symlinks]]. Коллизия destination с записью скила → SkillCollisionError.
-
-    Вывод агрегирован: одна строка на скил (link() в quiet). Возвращает
-    (total, linked) — всего элементов в зеркале, из них поставлено/обновлено.
-    """
-    ok, migrated = ensure_real_dir(ctx, dst)
-    if not ok:
-        return 0, 0
-
-    linked = 0
-    # 1) per-file зеркало записей верхнего уровня source-папки скила.
-    src_entries = {p.name: p for p in sorted(skill.path.iterdir())}
-    for name, src in src_entries.items():
-        st = link(ctx, src, dst / name, kind="/" if src.is_dir() else "",
-                  assume_absent=migrated, quiet=True)
-        linked += st == "linked"
-
-    # 2) доп. symlink'и [[skills.symlinks]] с проверкой коллизий.
-    wanted_extra: set[str] = set()
-    for sl in skill.symlinks:
-        dest = sl["destination"]
-        if dest in src_entries:
-            raise SkillCollisionError(
-                f"{skill.name}/{dest}: [[skills.symlinks]] перекрывает родную "
-                f"запись скила — исправьте config.toml")
-        extra_src = (REPO_DIR / sl["source"]).resolve()
-        st = link(ctx, extra_src, dst / dest,
-                  kind="/" if extra_src.is_dir() else "", assume_absent=migrated, quiet=True)
-        linked += st == "linked"
-        wanted_extra.add(dest)
-
-    total = len(src_entries) + len(wanted_extra)
-
-    # Одна строка на скил: + если что-то менялось, иначе = (без изменений).
-    items = _plural(total, "элемент", "элемента", "элементов")
-    if linked:
-        ctx.say(f"  + {skill.name}/ — {items} (+{linked})")
-    else:
-        ctx.say(f"  = {skill.name}/ — {items}")
-
-    # 3) внутренняя чистка: наши symlink'и в зеркале без соответствия (источник
-    #    удалён или destination убран из config). Пропускаем после миграции.
-    if not migrated and dst.is_dir() and not dst.is_symlink():
-        wanted = set(src_entries) | wanted_extra
-        for entry in sorted(dst.iterdir()):
-            if (entry.is_symlink() and _is_ours(_readlink(entry))
-                    and entry.name not in wanted):
-                ctx.say(f"  - {skill.name}/{entry.name} больше не актуален — удаляю symlink")
-                ctx.do(f"rm {entry}", entry.unlink)
-
-    return total, linked
-
-
-def install_skills(ctx: Ctx) -> None:
-    dst_root = CLAUDE_DIR / "skills"
-    ctx.say(f"Навыки -> {dst_root}/  (per-skill зеркало, per-file symlink)")
-    if not ctx.dry_run:
-        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
-
-    # ~/.claude/skills сам по себе — реальная папка (не folder-symlink).
-    ok, migrated = ensure_real_dir(ctx, dst_root)
-    if not ok:
-        ctx.say()
-        return
-
-    cfg = config.load()
-    for w in cfg.warnings:
-        ctx.say(f"  ! {w}")
-        ctx.errors += 1
-
-    skills = cfg.enabled_skills
-    wanted = {s.name for s in skills}
-
-    # (a) Чистка верхнего уровня: скил выпал из конфига/репо/выключен.
-    #     Удаляем наш устаревший folder-symlink (старая схема) или зеркало целиком.
-    #     Чужое не трогаем. Пропускаем, если папку только что мигрировали.
-    if not migrated and dst_root.is_dir() and not dst_root.is_symlink():
-        for entry in sorted(dst_root.iterdir()):
-            if entry.name in wanted:
-                continue
-            if entry.is_symlink() and _is_ours(_readlink(entry)):
-                ctx.say(f"  - {entry.name} больше не активен — удаляю symlink")
-                ctx.do(f"rm {entry}", entry.unlink)
-            elif _is_our_mirror(entry):
-                ctx.say(f"  - {entry.name}/ больше не активен — удаляю зеркало")
-                ctx.do(f"rm -rf {entry}", lambda e=entry: _rmtree_mirror(e))
-
-    total_links = 0
-    changed = 0
-    for s in skills:
-        t, linked = _mirror_skill(ctx, s, dst_root / s.name)
-        total_links += t
-        changed += linked
-
-    # Внешние зависимости скилов ([[skills.requirements]]): напр. локальный плеер
-    # для рендера/верификации. requirements одинаковы для всех скилов источника
-    # (прокинуты из записи) — проверяем один раз на источник, у которого есть
-    # включённый скил. Менеджер сам не ставит, только подсказывает.
-    seen_req_sources: set[str] = set()
-    for s in skills:
-        if not s.requirements or s.source in seen_req_sources:
-            continue
-        seen_req_sources.add(s.source)
-        plugins.check_requirements(ctx, s.source, s.requirements)
-
-    delta = f", изменено {changed}" if changed else " — без изменений"
-    sk = _plural(len(skills), "скил", "скила", "скилов")
-    ln = _plural(total_links, "symlink", "symlink'а", "symlink'ов")
-    ctx.say(f"  Итого: {sk}, {ln}{delta}.")
-    ctx.say()
-
-
-def install_hooks(ctx: Ctx) -> None:
-    dst = CLAUDE_DIR / "hooks"
-    ctx.say(f"Hooks -> {dst}/")
-    if not ctx.dry_run:
-        dst.mkdir(parents=True, exist_ok=True)
-    hooks_src = REPO_DIR / "ai" / "hooks"
-    if hooks_src.is_dir():
-        for f in sorted(hooks_src.glob("*.sh")):
-            link(ctx, f, dst / f.name)
-    ctx.say()
-
-
-def install_claude_md(ctx: Ctx) -> None:
-    """Глобальный CLAUDE.md -> symlink на repo/ai/claude/CLAUDE.global.md.
-
-    Грузится во всех сессиях. Управляется из репо (правь ai/claude/CLAUDE.global.md,
-    не ~/.claude/CLAUDE.md). Чужой существующий файл бэкапится при --force.
-    """
-    src = REPO_DIR / "ai" / "claude" / "CLAUDE.global.md"
-    if not src.is_file():
-        return
-    ctx.say(f"CLAUDE.md -> {CLAUDE_DIR / 'CLAUDE.md'}")
-    if not ctx.dry_run:
-        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
-    link(ctx, src, CLAUDE_DIR / "CLAUDE.md")
-    ctx.say()
-
-
-def install_statusline(ctx: Ctx) -> None:
-    """Statusline-скрипт -> symlink в ~/.claude/<dest>. settings.json пишет settings-слой."""
-    sl = config.load_statusline()
-    if not sl:
-        return
-    src = (REPO_DIR / sl["path"]).resolve()
-    ctx.say(f"Statusline -> {CLAUDE_DIR / sl['dest']}")
-    if not ctx.dry_run:
-        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
-    link(ctx, src, CLAUDE_DIR / sl["dest"])
-    # Зависимости команды statusline (напр. node для .mjs): без них CC молча не
-    # запускает статусбар — проверяем и подсказываем, как поставить.
-    plugins.check_requirements(ctx, "config.toml [statusline]",
-                               sl.get("requirements", []))
-    ctx.say()
-
-
-def install_dotfiles(ctx: Ctx) -> None:
-    """Dotfiles ([[dotfiles]]) -> symlink'и в $HOME. Не про Claude Code — общий сетап машины.
-
-    dst строится от $HOME (в отличие от прочих install_* — те от CLAUDE_DIR). Прун
-    снятых записей НЕ делаем: итерировать/удалять в $HOME небезопасно — убрал запись
-    из config, симлинк снимаешь вручную.
-    """
-    entries, warnings = config.load_dotfiles()
-    for w in warnings:
-        ctx.say(f"  ! {w}")
-    if not entries:
-        ctx.say("  (нет записей [[dotfiles]])")
-        ctx.say()
-        return
-    for e in entries:
-        src = (REPO_DIR / e["source"]).resolve()
-        dst = Path(e["target"]).expanduser()
-        kind = "/" if src.is_dir() else ""
-        if not ctx.dry_run:
-            dst.parent.mkdir(parents=True, exist_ok=True)   # напр. ~/.config/nvim/
-        link(ctx, src, dst, kind=kind)
-    ctx.say()
-
-
 def _section(ctx: Ctx, title: str) -> None:
-    """Заголовок-разделитель домена в выводе (Claude Code / Dotfiles)."""
+    """Заголовок-разделитель домена в выводе (Claude / Files)."""
     ctx.say(f"══ {title} " + "═" * max(0, 40 - len(title)))
     ctx.say()
 
@@ -465,21 +174,25 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
     """Разложить плагины (seed) + symlink'и + смержить settings. Возвращает число ошибок.
 
     Два домена, разделённые в выводе заголовками:
-      • Claude Code — seed + settings + agents/skills/commands/hooks/CLAUDE.md/statusline;
-      • Dotfiles    — симлинки [[dotfiles]] в $HOME (общий сетап машины).
+      • Claude — seed + settings + agents/skills/commands/hooks/CLAUDE.md/rules/statusline;
+      • Files  — симлинки [[dotfiles]] в $HOME (общий сетап машины).
 
-    Порядок внутри Claude Code (важен для миграции skills→plugins):
+    Порядок внутри Claude (важен для миграции skills→plugins):
       1. seed build — собрать включённые [[plugins]] через claude CLI;
       2. settings merge — enabledPlugins + SEED_DIR + mcp + hooks (до прун-фаз symlink'ов,
          чтобы плагин был зарегистрирован раньше, чем исчезнут его старые loose-зеркала);
-      3. loose-symlink'и: agents, skills (с пруном выпавшего), commands, hooks-файлы.
+      3. loose-symlink'и: agents, skills (с пруном выпавшего), commands, hooks, CLAUDE.md,
+         rules, statusline.
 
     quiet: подавить баннер. skip_seed/skip_settings: пропустить соответствующую фазу
-    (быстрый toggle loose из UI). only: "claude" | "dotfiles" — гонять только один домен
+    (быстрый toggle loose из UI). only: "claude" | "files" — гонять только один домен
     (None = оба).
     """
+    from . import claude
+    from . import files
+
     do_claude = only in (None, "claude")
-    do_dotfiles = only in (None, "dotfiles")
+    do_files = only in (None, "files")
     ctx = Ctx(dry_run, force)
     if not quiet:
         ctx.say(f"Репо:        {REPO_DIR}")
@@ -489,7 +202,7 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
         ctx.say()
 
     if do_claude:
-        _section(ctx, "Claude Code")
+        _section(ctx, "Claude")
         # 1. Плагины → seed (включённые [[plugins]] собираются самим claude CLI).
         plugin_list = config.load_plugins()
         if not skip_seed:
@@ -501,23 +214,24 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
             ctx.errors += settings.merge_into_settings(plugin_list, dry_run=dry_run)
 
         # 3. Loose-symlink'и.
-        install_agents(ctx)
+        claude.install_agents(ctx)
         try:
-            install_skills(ctx)
-        except SkillCollisionError as e:
+            claude.install_skills(ctx)
+        except claude.SkillCollisionError as e:
             # Коллизия [[skills.symlinks]] — фатально для skills-фазы: прерываем
-            # раскладку скилов. Хуки всё ещё разложим. Ненулевой ctx.errors → exit 1.
+            # раскладку скилов. Остальное всё ещё разложим. Ненулевой ctx.errors → exit 1.
             ctx.say(f"  ! {e}")
             ctx.errors += 1
             ctx.say()
-        install_commands(ctx)
-        install_hooks(ctx)
-        install_claude_md(ctx)
-        install_statusline(ctx)
+        claude.install_commands(ctx)
+        claude.install_hooks(ctx)
+        claude.install_claude_md(ctx)
+        claude.install_rules(ctx)
+        claude.install_statusline(ctx)
 
-    if do_dotfiles:
-        _section(ctx, "Dotfiles")
-        install_dotfiles(ctx)
+    if do_files:
+        _section(ctx, "Files")
+        files.install_files(ctx)
 
     if not quiet:
         if ctx.errors:

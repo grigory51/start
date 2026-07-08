@@ -105,16 +105,16 @@ def build_fragment(plugins: list[config.Plugin]) -> dict:
 
 
 def _build_hooks_fragment() -> dict:
-    """hooks-фрагмент из [[hooks]] config.toml: {event: [{hooks:[{type:command,command}]}]}.
+    """hooks-фрагмент из [[claude.hooks]] config.toml: {event: [{hooks:[{type:command,command}]}]}.
 
-    [[hooks]] запись: path (rel к репо, *.sh) + events (список имён событий CC).
+    [[claude.hooks]] запись: path (rel к репо, *.sh) + events (список имён событий CC).
     Команда — `bash "<~/.claude/hooks/basename>"` (файл туда симлинкает install-слой).
     Группируем по событию.
     """
     warnings: list[str] = []
     base = config._load_doc(config.CONFIG, warnings)
     by_event: dict[str, list[dict]] = {}
-    for entry in base.get("hooks", []):
+    for entry in config._claude(base).get("hooks", []):
         path = (entry.get("path") or "").strip()
         events = entry.get("events") or []
         if not path or not events:

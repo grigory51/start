@@ -66,7 +66,7 @@ def _cmd_add_submodule(args: argparse.Namespace) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="start",
-        description="Переносимый сетап машины: конфиг Claude Code + dotfiles симлинками из репо, и TUI.",
+        description="Переносимый сетап машины: домены Claude (~/.claude) + Files ($HOME) симлинками из репо, и TUI.",
     )
     sub = ap.add_subparsers(dest="cmd")
 
@@ -80,8 +80,8 @@ def main() -> int:
                     help="пропустить сборку plugin seed")
     up.add_argument("--no-settings", action="store_true",
                     help="пропустить merge ~/.claude/settings.json")
-    up.add_argument("--only", choices=["claude", "dotfiles"], default=None,
-                    help="гонять только один домен: claude (~/.claude) или dotfiles ($HOME)")
+    up.add_argument("--only", choices=["claude", "files"], default=None,
+                    help="гонять только один домен: claude (~/.claude) или files ($HOME)")
     up.set_defaults(func=_cmd_up)
 
     st = sub.add_parser("settings", help="merge managed-ключей в ~/.claude/settings.json (sidecar)")
