@@ -175,7 +175,9 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
 
     Два домена, разделённые в выводе заголовками:
       • Claude — seed + settings + agents/skills/commands/hooks/CLAUDE.md/rules/statusline;
-      • Files  — симлинки [[dotfiles]] в $HOME (общий сетап машины).
+                 пропускается целиком, если нет `claude` в PATH (нет смысла раскладывать
+                 конфиг отсутствующего инструмента);
+      • Files  — симлинки [[files.dotfiles]] в $HOME (общий сетап машины).
 
     Порядок внутри Claude (важен для миграции skills→plugins):
       1. seed build — собрать включённые [[plugins]] через claude CLI;
@@ -200,6 +202,16 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
         if ctx.dry_run:
             ctx.say("(dry-run: изменения не применяются)")
         ctx.say()
+
+    # Нет Claude Code (бинаря claude в PATH) — домен Claude пропускаем целиком:
+    # ни seed, ни settings, ни symlink'и в ~/.claude. Незачем раскладывать конфиг
+    # для отсутствующего инструмента. Домен Files при этом отрабатывает как обычно.
+    if do_claude and not plugins.claude_available():
+        _section(ctx, "Claude")
+        ctx.say("  ! `claude` не найден в PATH — домен Claude пропущен целиком.")
+        ctx.say("    Появится Claude Code + повторный up — разложим ~/.claude.")
+        ctx.say()
+        do_claude = False
 
     if do_claude:
         _section(ctx, "Claude")

@@ -187,7 +187,7 @@ CLAUDE_CODE_PLUGIN_CACHE_DIR=.seed  claude plugin install <plugin>@<marketplace>
 
 Затем досоздаёт симлинк `.seed/marketplaces/<mp>` → корень плагина: при чтении seed CC физически probит `$SEED/marketplaces/<name>/`, а для local `directory`-source туда контент не кладёт — без симлинка плагин не материализуется. CC читает seed через env `CLAUDE_CODE_PLUGIN_SEED_DIR` (абсолютный путь на `.seed`, пишется в `~/.claude/settings.json`): read-only, без клона, без промпта — и сам подключает skills/agents/commands/hooks/MCP плагина, резолвит `${CLAUDE_PLUGIN_ROOT}`. Так раньше терявшиеся хуки/MCP/команды (напр. у `claude-seo`) теперь работают.
 
-> **Требуется `claude` в PATH.** Без него фаза плагинов пропускается с предупреждением (остальная, loose-часть всё равно отрабатывает).
+> **Требуется `claude` в PATH.** Без него **весь домен Claude пропускается целиком** (ни seed, ни settings, ни symlink'и в `~/.claude`) — нет смысла раскладывать конфиг отсутствующего инструмента. Домен Files при этом отрабатывает как обычно. Появится Claude Code → повторный `up` разложит `~/.claude`.
 
 Seed — производный артефакт: пересобирается на каждом `up`/`seed`. У seed CC отключает auto-update by design, поэтому **обновление плагина** = `make up` (git submodule update тянет новый пин → пересборка seed). Toggle плагина в TUI или `make seed` делает то же точечно.
 
@@ -277,7 +277,7 @@ posthook = 'defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$SOU
 make files            # = uv run start up --only files
 ```
 
-Раскатываются только dotfiles/posthook'и — `~/.claude`, сабмодули, plugin seed и `settings.json` не трогаются. Полный `make up` на такой машине тоже не падает: фаза plugin seed сама пропускается с предупреждением, если `claude` нет в PATH; остальное отрабатывает. Точечно включить/выключить отдельные плагины/скилы/MCP под конкретную машину — через `config.local.toml` (`[local.plugins]`, `[local.skills]`, `[local.mcp]`; формат плоский) или клавишей `t` в `make manage`.
+Раскатываются только dotfiles/posthook'и — `~/.claude`, сабмодули, plugin seed и `settings.json` не трогаются. Полный `make up` на такой машине тоже безопасен: если `claude` нет в PATH, **весь домен Claude пропускается целиком** (с сообщением), отрабатывает только Files. То есть `make files` здесь — про запуск строго одного домена, а `make up` сам сведётся к Files, пока нет Claude Code. Точечно включить/выключить отдельные плагины/скилы/MCP под конкретную машину — через `config.local.toml` (`[local.plugins]`, `[local.skills]`, `[local.mcp]`; формат плоский) или клавишей `t` в `make manage`.
 
 ## Кастомизация
 
