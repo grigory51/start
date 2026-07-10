@@ -250,3 +250,24 @@ target = "~/.vimrc"
 [[files.dotfiles]]
 source = "dotfiles/iterm"
 posthook = 'defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$SOURCE" && defaults write com.googlecode.iterm2 LoadPrefsFromCustomFolder -bool true'
+
+
+# ══════════════════════════════ COMMANDS ══════════════════════════════
+# Домен «Команды»: разовые действия на машине, запускаемые из TUI по требованию
+# (не про провижининг — up их не трогает). Каждая [[commands.tasks]] — команда с
+# вариантами запуска по ОС.
+#   name        — идентификатор.
+#   title       — отображаемое имя.
+#   description — что делает.
+#   sudo        — (опц.) нужен root: пометка в TUI (сам sudo — часть команды).
+#   [commands.tasks.run] — команда по платформам; ключи по sys.platform
+#                 (darwin/linux/win32). На текущей ОС берётся run[sys.platform];
+#                 нет ключа под неё → команда недоступна здесь (TUI пометит).
+
+[[commands.tasks]]
+name = "flush-dns"
+title = "Сбросить DNS-кеш"
+description = "Очистить кеш DNS-резолвера операционной системы."
+sudo = true
+[commands.tasks.run]
+darwin = "sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"

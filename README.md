@@ -30,7 +30,7 @@ make up
 | `make files` | только домен Files (`$HOME`), без сабмодулей/seed/settings |
 | `make seed` | пересобрать plugin seed (`.seed/`) + merge `settings.json` (без loose-symlink'ов) |
 | `make settings` | показать diff managed-ключей `settings.json` (dry-run, без записи) |
-| `make manage` | TUI: агенты, скилы, плагины |
+| `make manage` | TUI: домены Claude / Files / Команды (переключение — F2) |
 
 **Флаги `start` через make** пробрасываются после `--` — иначе make перехватит их как свои опции:
 
@@ -44,7 +44,7 @@ CLI — `uv run start <команда>` (Python 3.11+). Подкоманды:
 - `up` — оба домена (флаги `--dry-run`, `--force`, `--no-submodules`, `--no-seed`, `--no-settings`, `--only claude|files`)
 - `seed` — пересобрать plugin seed + merge `settings.json`, не трогая loose-symlink'и (флаг `--dry-run`)
 - `settings` — merge managed-ключей в `~/.claude/settings.json` (флаги `--dry-run`, `--remove`)
-- `manage` — Textual TUI с тремя вкладками. **Агенты**: сгруппированы по источнику, Enter открывает модалку с телом `.md`. **Скилы**: сгруппированы по источнику, Enter открывает `SKILL.md`, Space/`t` включает/выключает (правит поле `enabled` источника прямо в `config.toml` и тут же дёргает линковку), `a` — добавить git-сабмодуль (см. ниже). **Плагины**: список `[[claude.plugins]]`, Space/`t` toggle (пересобирает seed + merge settings), Enter открывает `plugin.json`, ⚠ помечает плагины с SessionStart-хуками.
+- `manage` — Textual TUI, разбитый на **домены** (переключение — **F2**, norton-стиль; вложенных табов нет). **Claude** — вкладки: **Агенты** (сгруппированы по источнику, Enter — тело `.md`), **Скилы** (Enter — `SKILL.md`; Space/`t` вкл/выкл, правит `enabled` в `config.toml` и дёргает линковку; `g` — глобально; `a` — добавить git-сабмодуль), **Плагины** (`[[claude.plugins]]`, Space/`t` toggle пересобирает seed + merge settings, Enter — `plugin.json`, ⚠ — SessionStart-хуки), **MCP** (`[[claude.mcp]]`, toggle → `~/.claude.json`). **Files** — просмотр `[[files.dotfiles]]` (source/target/posthook), Enter — детали. **Команды** — `[[commands.tasks]]`: `r`/Enter запускают команду для текущей ОС (TUI на время запуска сворачивается, чтобы sudo мог спросить пароль).
 - `add-submodule <url>` — `git submodule add` в `contrib/`; автодетект: если в сабмодуле есть `.claude-plugin/` — регистрируется как `[[claude.plugins]]`, иначе автодетект подпапки со скилами и запись `[[claude.skills]]` (флаги `--name`, `--skills-subdir`, `--no-install`)
 
 Общие флаги домена(ов):
@@ -278,6 +278,23 @@ make files            # = uv run start up --only files
 ```
 
 Раскатываются только dotfiles/posthook'и — `~/.claude`, сабмодули, plugin seed и `settings.json` не трогаются. Полный `make up` на такой машине тоже безопасен: если `claude` нет в PATH, **весь домен Claude пропускается целиком** (с сообщением), отрабатывает только Files. То есть `make files` здесь — про запуск строго одного домена, а `make up` сам сведётся к Files, пока нет Claude Code. Точечно включить/выключить отдельные плагины/скилы/MCP под конкретную машину — через `config.local.toml` (`[local.plugins]`, `[local.skills]`, `[local.mcp]`; формат плоский) или клавишей `t` в `make manage`.
+
+## Домен Команды (Commands)
+
+Разовые действия на машине, запускаемые из TUI по требованию (не про провижининг — `up` их не трогает). Секция `[[commands.tasks]]` в `config.toml`, у каждой команды — варианты запуска по ОС:
+
+```toml
+[[commands.tasks]]
+name = "flush-dns"
+title = "Сбросить DNS-кеш"
+description = "Очистить кеш DNS-резолвера операционной системы."
+sudo = true                 # пометка «нужен root» (сам sudo — часть команды)
+[commands.tasks.run]
+darwin = "sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
+# linux = "..."             # закладка под другие ОС (ключи по sys.platform)
+```
+
+На текущей ОС берётся `run[sys.platform]` (`darwin`/`linux`/`win32`); нет варианта под неё — команда помечается недоступной и не запускается. В TUI: домен **Команды** (F2), `r`/Enter — запуск. На время запуска TUI сворачивается (`app.suspend`), команда получает реальный терминал — поэтому `sudo` может спросить пароль; после — статус результата.
 
 ## Кастомизация
 

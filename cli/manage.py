@@ -1,12 +1,18 @@
-"""manage.py — Textual TUI для просмотра агентов и управления скилами.
+"""manage.py — Textual TUI для управления обоими доменами.
 
-Две вкладки:
-  Агенты  — агенты из [[agents]]-источников config.toml, сгруппированные по
-            источнику (имя + описание). Enter открывает модалку с телом `.md`.
-  Скилы   — список скилов: статус, имя, источник, описание. Enter открывает
-            модалку с `SKILL.md`. Space/`t` включает/выключает скил (или весь
-            источник, если курсор на заголовке): правится `enabled`-список
-            источника в config.toml, затем дёргается install (без сабмодулей).
+Три домена (как в config.toml) переключаются клавишей F2 (norton-стиль), а не
+вкладкой — чтобы не было табов-над-табами:
+  Claude  — вкладки:
+    Агенты  — агенты из [[claude.agents]], сгруппированы по источнику. Enter — тело `.md`.
+    Скилы   — статус/имя/источник/описание. Enter — `SKILL.md`. Space/`t` вкл/выкл скил
+              (или весь источник на заголовке), `g` — глобально; правится `enabled` в
+              config.toml/config.local.toml, затем install (без сабмодулей).
+    Плагины — [[claude.plugins]]: toggle (локально/глобально), пересборка seed.
+    MCP     — [[claude.mcp]]: toggle → ~/.claude.json.
+  Files   — dotfiles ([[files.dotfiles]]): просмотр записей (source/target/posthook).
+            Тогглов нет — dotfiles не выключаются; Enter показывает детали записи.
+  Команды — разовые действия ([[commands.tasks]]): r/Enter запускают команду для
+            текущей ОС (с выходом из TUI, чтобы sudo мог спросить пароль).
 
 Запуск: `uv run start manage`.
 """
@@ -14,7 +20,10 @@
 from __future__ import annotations
 
 import io
+import json
 import os
+import subprocess
+import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -24,7 +33,8 @@ from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
-    DataTable, Footer, Header, Input, Markdown, Static, TabbedContent, TabPane,
+    ContentSwitcher, DataTable, Footer, Header, Input, Markdown, Static,
+    TabbedContent, TabPane,
 )
 
 from . import config
@@ -34,6 +44,19 @@ from .up import run_up
 def _truncate(s: str, n: int) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _as_json_block(raw: str) -> str:
+    """JSON-текст → markdown code-fence ```json (иначе Markdown схлопывает переносы).
+
+    Дополнительно pretty-print (indent=2) — на случай минифицированного файла. Если
+    не парсится как JSON — отдаём исходник в fence как есть.
+    """
+    try:
+        pretty = json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+    except (json.JSONDecodeError, ValueError):
+        pretty = raw
+    return f"```json\n{pretty}\n```"
 
 
 def _state_cells(enabled: bool, enabled_base: bool,
@@ -92,9 +115,13 @@ class ContentScreen(ModalScreen):
             subtitle = ""
         else:
             try:
-                text = self._path.read_text(errors="replace")
+                raw = self._path.read_text(errors="replace")
             except OSError as e:
                 text = f"# {self._title}\n\nНе удалось прочитать `{self._path}`:\n\n```\n{e}\n```"
+            else:
+                # .json рендерим как code-fence (Markdown иначе схлопывает переносы);
+                # .md — как есть (это и есть markdown).
+                text = _as_json_block(raw) if self._path.suffix == ".json" else raw
             subtitle = str(self._path)
         with Container(id="modal-box"):
             yield Static(f"[b]{self._title}[/]  [dim]{subtitle}[/]", id="modal-title")
@@ -360,7 +387,6 @@ class McpPane(TabPane):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         m = self._at_cursor()
         if m is not None:
-            import json
             self.app.push_screen(ContentScreen(
                 m.name, text=f"```json\n{json.dumps(m.server or {}, indent=2, ensure_ascii=False)}\n```"))
 
@@ -563,10 +589,159 @@ class SkillsPane(TabPane):
             self._status(f"✗ {res.message}", warn=True)
 
 
-class ManagerApp(App):
-    """Корневое приложение: вкладки Агенты / Скилы."""
+class FilesPane(Container):
+    """Домен Files ($HOME): dotfiles ([[files.dotfiles]]) — просмотр.
 
-    TITLE = "Claude Agents Management"
+    Тогглов нет (dotfiles не выключаются, у них нет `enabled`), только просмотр
+    записей: источник в репо, target в $HOME (— если только posthook), posthook.
+    Enter — детали записи. Не TabPane (домен Files — единственная вьюха, без
+    вложенных вкладок), поэтому обычный Container внутри доменной вкладки.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._row_map: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="files-table", cursor_type="row", zebra_stripes=True)
+        yield Static("", id="files-status")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#files-table", DataTable)
+        table.add_column("Источник (репо)", width=28)
+        table.add_column("→ $HOME", width=24)
+        table.add_column("posthook")
+        self._reload()
+
+    def _reload(self) -> None:
+        table = self.query_one("#files-table", DataTable)
+        table.clear()
+        self._row_map = []
+        entries, warnings = config.load_dotfiles()
+        for e in entries:
+            target = e.get("target") or "[dim]—[/]"
+            ph = e.get("posthook") or ""
+            ph_cell = _truncate(ph, 60) if ph else "[dim]—[/]"
+            table.add_row(e["source"], target, ph_cell)
+            self._row_map.append(e)
+        st = self.query_one("#files-status", Static)
+        if warnings:
+            st.update("[yellow]⚠ " + "; ".join(warnings[:3]) + "[/]")
+        elif not entries:
+            st.update("[yellow]Нет [[files.dotfiles]]-записей в config.toml[/]")
+        else:
+            st.update("")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        row = event.cursor_row
+        if row is None or row >= len(self._row_map):
+            return
+        e = self._row_map[row]
+        lines = [f'source = "{e["source"]}"']
+        if e.get("target"):
+            lines.append(f'target = "{e["target"]}"')
+        if e.get("posthook"):
+            lines.append(f"posthook = '{e['posthook']}'")
+        text = "```toml\n[[files.dotfiles]]\n" + "\n".join(lines) + "\n```"
+        self.app.push_screen(ContentScreen(e["source"], text=text))
+
+
+class CommandsPane(Container):
+    """Домен «Команды»: разовые действия ([[commands.tasks]]) — запуск по требованию.
+
+    `r`/Enter запускают команду для текущей ОС. Запуск идёт с выходом из TUI
+    (app.suspend) — команда получает реальный терминал, поэтому sudo может спросить
+    пароль. Команда без варианта под текущую ОС помечена недоступной и не запускается.
+    """
+
+    BINDINGS = [
+        Binding("r,enter", "run", "Запустить", show=True),
+    ]
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._row_map: list[config.Task] = []
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="commands-table", cursor_type="row", zebra_stripes=True)
+        yield Static("", id="commands-status")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#commands-table", DataTable)
+        table.add_column("💡", width=3)
+        table.add_column("Команда", width=26)
+        table.add_column("Запуск (эта ОС)")
+        self._reload()
+
+    def _reload(self) -> None:
+        table = self.query_one("#commands-table", DataTable)
+        prev = table.cursor_row
+        table.clear()
+        self._row_map = []
+        tasks, warnings = config.load_tasks()
+        for t in tasks:
+            cmd = t.command
+            lamp = "💡" if cmd else "[dim]○[/]"
+            title = t.title + (" [yellow]🔒[/]" if t.sudo else "")
+            run_cell = _truncate(cmd, 70) if cmd else "[dim]— нет варианта для этой ОС[/]"
+            table.add_row(lamp, title, run_cell)
+            self._row_map.append(t)
+        if self._row_map:
+            table.move_cursor(row=min(prev, len(self._row_map) - 1))
+        st = self.query_one("#commands-status", Static)
+        if warnings:
+            st.update("[yellow]⚠ " + "; ".join(warnings[:3]) + "[/]")
+        elif not tasks:
+            st.update("[yellow]Нет [[commands.tasks]] в config.toml[/]")
+        else:
+            st.update("[dim]r / Enter — запустить выбранную команду[/]")
+
+    def _status(self, msg: str, *, warn: bool = False) -> None:
+        self.query_one("#commands-status", Static).update(
+            f"[{'yellow' if warn else 'green'}]{msg}[/]")
+
+    def _at_cursor(self) -> config.Task | None:
+        table = self.query_one("#commands-table", DataTable)
+        row = table.cursor_row
+        if row is None or row >= len(self._row_map):
+            return None
+        return self._row_map[row]
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self.action_run()
+
+    def action_run(self) -> None:
+        t = self._at_cursor()
+        if t is None:
+            return
+        cmd = t.command
+        if cmd is None:
+            self._status(f"{t.title}: нет варианта под эту ОС ({sys.platform})", warn=True)
+            return
+        # Выходим из TUI на время запуска: команда получает реальный терминал (sudo
+        # сможет спросить пароль), после — возвращаемся и показываем результат.
+        with self.app.suspend():
+            print(f"\n$ {cmd}\n")
+            rc = subprocess.run(cmd, shell=True).returncode
+        if rc == 0:
+            self._status(f"{t.title}: готово ✓")
+        else:
+            self._status(f"{t.title}: завершилась с кодом {rc}", warn=True)
+
+
+# Домены верхнего уровня: (id контента, подпись). Порядок = порядок цикла по F2.
+_DOMAINS = [
+    ("dom-claude", "Claude"),
+    ("dom-files", "Files"),
+    ("dom-commands", "Команды"),
+]
+
+
+class ManagerApp(App):
+    """Корневое приложение: домены Claude (Агенты/Скилы/Плагины/MCP), Files (dotfiles),
+    Команды (разовые действия). Переключение доменов — F2 (norton-стиль)."""
+
+    TITLE = "start — менеджер (Claude · Files · Команды)"
 
     CSS = """
     Screen { layout: vertical; }
@@ -574,6 +749,9 @@ class ManagerApp(App):
     #skills-status { height: 1; padding: 0 1; }
     #plugins-status { height: 1; padding: 0 1; }
     #mcp-status { height: 1; padding: 0 1; }
+    #files-status { height: 1; padding: 0 1; }
+    #commands-status { height: 1; padding: 0 1; }
+    #domain-bar { height: 1; padding: 0 1; background: $boost; }
 
     ContentScreen { align: center middle; }
     #modal-box {
@@ -590,17 +768,46 @@ class ManagerApp(App):
 
     BINDINGS = [
         Binding("q,escape", "quit", "Выход", show=True),
+        Binding("f2", "toggle_domain", "Домен ⇄", show=True),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Container():
-            with TabbedContent():
-                yield AgentsPane("Агенты", id="tab-agents")
-                yield SkillsPane("Скилы", id="tab-skills")
-                yield PluginsPane("Плагины", id="tab-plugins")
-                yield McpPane("MCP", id="tab-mcp")
+            # Домены переключаются F2 (norton-стиль), а не вкладкой — чтобы не было
+            # табов-над-табами. Виден только один ряд вкладок (Claude); Files/Команды —
+            # отдельные вьюхи без вкладок. ContentSwitcher показывает домен по id.
+            yield Static(self._domain_bar_text("dom-claude"), id="domain-bar")
+            with ContentSwitcher(initial="dom-claude", id="domains"):
+                with TabbedContent(id="dom-claude"):
+                    yield AgentsPane("Агенты", id="tab-agents")
+                    yield SkillsPane("Скилы", id="tab-skills")
+                    yield PluginsPane("Плагины", id="tab-plugins")
+                    yield McpPane("MCP", id="tab-mcp")
+                yield FilesPane(id="dom-files")
+                yield CommandsPane(id="dom-commands")
         yield Footer()
+
+    @staticmethod
+    def _domain_bar_text(current: str) -> str:
+        """Плашка доменов: активный — инверсией, прочие — тускло. Хинт про F2."""
+        cells = "".join(
+            f"[b reverse] {label} [/]" if dom == current else f"[dim] {label} [/]"
+            for dom, label in _DOMAINS)
+        return cells + "   [dim]F2 — переключить домен[/]"
+
+    def action_toggle_domain(self) -> None:
+        cs = self.query_one("#domains", ContentSwitcher)
+        ids = [dom for dom, _ in _DOMAINS]
+        cs.current = ids[(ids.index(cs.current) + 1) % len(ids)]
+        self.query_one("#domain-bar", Static).update(self._domain_bar_text(cs.current))
+        # У доменов-вьюх (Files/Команды) — одна таблица; сразу под курсор.
+        tbl = {"dom-files": "#files-table", "dom-commands": "#commands-table"}.get(cs.current)
+        if tbl:
+            try:
+                self.query_one(tbl, DataTable).focus()
+            except Exception:
+                pass
 
 
 def run_manage() -> int:

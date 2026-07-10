@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -111,6 +112,28 @@ class McpServer:
 
 
 @dataclass
+class Task:
+    """Команда домена «Команды»: разовое действие на машине (запуск из TUI).
+
+    run — команда по платформам (ключи sys.platform: darwin/linux/win32). На текущей
+    ОС берётся run[sys.platform]; нет ключа под неё → команда недоступна здесь
+    (`command` == None). sudo — подсказка, что нужен root (для текста/подтверждения;
+    сам вызов sudo — часть команды).
+    """
+    name: str
+    title: str
+    description: str
+    run: dict[str, str]        # platform (sys.platform) -> команда
+    sudo: bool = False
+
+    @property
+    def command(self) -> str | None:
+        """Команда для текущей ОС (None, если варианта под sys.platform нет)."""
+        cmd = self.run.get(sys.platform)
+        return cmd if isinstance(cmd, str) and cmd.strip() else None
+
+
+@dataclass
 class ConfigResult:
     """Результат разбора конфига для дальнейшей линковки и UI."""
     skills: list[Skill] = field(default_factory=list)
@@ -182,6 +205,13 @@ def _files(doc: dict) -> dict:
     """Суб-таблица [files] из config.toml ({} если нет). Домен Files ($HOME): dotfiles."""
     f = doc.get("files")
     return f if isinstance(f, dict) else {}
+
+
+def _commands(doc: dict) -> dict:
+    """Суб-таблица [commands] из config.toml ({} если нет). Домен «Команды»: разовые
+    действия (tasks), запускаемые из TUI по требованию (не провижининг, up не трогает)."""
+    c = doc.get("commands")
+    return c if isinstance(c, dict) else {}
 
 
 def _entries(doc: dict, fname: str, warnings: list[str], key: str = "skills") -> list[dict]:
@@ -656,6 +686,39 @@ def load_dotfiles() -> tuple[list[dict], list[str]]:
                 f"[[files.dotfiles]] #{i}: нет ни target, ни posthook — пропуск")
             continue
         out.append({"source": source, "target": target, "posthook": posthook})
+    return out, warnings
+
+
+def load_tasks() -> tuple[list[Task], list[str]]:
+    """`[[commands.tasks]]` из config.toml: список Task домена «Команды» + warnings.
+
+    Разовые действия на машине, запускаемые из TUI (не провижининг — up их не трогает).
+    Запись: name (обяз.), title (по умолчанию = name), description, [commands.tasks.run]
+    (dict platform→команда, обяз. непустой), sudo (bool-подсказка). Битые записи —
+    предупреждение и пропуск. Секции нет — пустой список.
+    """
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    raw = _commands(base).get("tasks", [])
+    if not isinstance(raw, list):
+        return [], warnings
+    out: list[Task] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        run = item.get("run")
+        if not name or not isinstance(run, dict) or not run:
+            warnings.append(
+                f"[[commands.tasks]] #{i}: нужен name и непустой [commands.tasks.run] — пропуск")
+            continue
+        out.append(Task(
+            name=name,
+            title=str(item.get("title") or name).strip(),
+            description=str(item.get("description") or "").strip(),
+            run={str(k): str(v) for k, v in run.items()},
+            sudo=bool(item.get("sudo", False)),
+        ))
     return out, warnings
 
 
