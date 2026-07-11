@@ -271,3 +271,15 @@ description = "Очистить кеш DNS-резолвера операцион
 sudo = true
 [commands.tasks.run]
 darwin = "sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
+
+# PXE-загрузка: локальный netboot.xyz (Docker) + нативный dnsmasq (proxyDHCP+TFTP) для
+# установки старой машины по сети без интернета на ней. Скрипт интерактивный (выбор
+# интерфейса), поэтому запускается из TUI с реальным терминалом. Требует OrbStack/Docker
+# и `brew install dnsmasq`; разовое предскачивание дистрибутивов — через webUI netboot.xyz.
+[[commands.tasks]]
+name = "pxe-netboot"
+title = "PXE-загрузка (локальный netboot.xyz)"
+description = "Локальный PXE-сервер для установки машины по сети без интернета на ней. UEFI+BIOS. Ctrl-C — стоп."
+sudo = true
+[commands.tasks.run]
+darwin = 'bash "$REPO/scripts/pxe-netboot.sh"'

@@ -651,7 +651,9 @@ class CommandsPane(Container):
 
     `r`/Enter запускают команду для текущей ОС. Запуск идёт с выходом из TUI
     (app.suspend) — команда получает реальный терминал, поэтому sudo может спросить
-    пароль. Команда без варианта под текущую ОС помечена недоступной и не запускается.
+    пароль. cwd = корень репо, в env прокинут `REPO` (абсолютный путь) — чтобы команда
+    ссылалась на скрипты репо независимо от cwd. Команда без варианта под текущую ОС
+    помечена недоступной и не запускается.
     """
 
     BINDINGS = [
@@ -719,10 +721,19 @@ class CommandsPane(Container):
             self._status(f"{t.title}: нет варианта под эту ОС ({sys.platform})", warn=True)
             return
         # Выходим из TUI на время запуска: команда получает реальный терминал (sudo
-        # сможет спросить пароль), после — возвращаемся и показываем результат.
+        # сможет спросить пароль), после — возвращаемся и показываем результат. Запуск в
+        # корне репо + env REPO (абсолютный путь) — чтобы команда ссылалась на скрипты
+        # репо (напр. "$REPO/scripts/...") независимо от cwd запуска manage.
+        env = {**os.environ, "REPO": str(config.REPO_DIR)}
         with self.app.suspend():
             print(f"\n$ {cmd}\n")
-            rc = subprocess.run(cmd, shell=True).returncode
+            rc = subprocess.run(cmd, shell=True, cwd=config.REPO_DIR, env=env).returncode
+            # Пауза перед возвратом: иначе TUI перерисуется поверх вывода и ошибку/итог
+            # не успеть прочитать. Ждём Enter (Ctrl-D/Ctrl-C тоже возвращают).
+            try:
+                input(f"\n[код {rc} — Enter, чтобы вернуться в менеджер]")
+            except (EOFError, KeyboardInterrupt):
+                pass
         if rc == 0:
             self._status(f"{t.title}: готово ✓")
         else:

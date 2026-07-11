@@ -1,0 +1,35 @@
+# netboot.xyz, self-hosted — локальный PXE-стек для домена «Команды» (см.
+# scripts/pxe-netboot.sh). Даёт webUI (управление/предскачивание), локальное меню и
+# nginx-раздачу ассетов. Цель — ставить машины БЕЗ интернета на них: всё тянется с Mac.
+#
+# Роли под OrbStack (Linux-VM, без bridged-L2 к en0):
+#   • DHCP/proxyDHCP — НЕ здесь: broadcast из контейнера до физического сегмента не дойдёт.
+#     Его держит нативный dnsmasq на хосте (scripts/pxe-netboot.sh).
+#   • Этот контейнер — HTTP/меню/ассеты (unicast). Чтобы целевая машина достала их по
+#     <MacIP>:<port>, в OrbStack включи «Expose ports to LAN» (Settings → Network).
+#
+# TFTP-порт (69/udp) НЕ публикуем: загрузчик отдаёт нативный dnsmasq на хосте (его
+# tftp-root указывает на сгенерированные контейнером локальные iPXE-бинарники в config-томе).
+#
+# Первый запуск (разово, у Mac есть интернет): открыть webUI http://localhost:3000 →
+# включить локальные загрузочные файлы (Local assets) и скачать нужные дистрибутивы —
+# они лягут в ./assets и дальше раздаются офлайн.
+
+services:
+  netbootxyz:
+    image: ghcr.io/netbootxyz/netbootxyz
+    container_name: netbootxyz
+    environment:
+      - TZ=Europe/Moscow
+      # PUID/PGID — при необходимости под свой uid/gid (linuxserver-конвенция).
+      # - PUID=1000
+      # - PGID=1000
+    volumes:
+      # Кеш вне репо (ассеты — гигабайты). ${HOME} разворачивает compose.
+      - ${HOME}/.cache/start-pxe/config:/config
+      - ${HOME}/.cache/start-pxe/assets:/assets
+    ports:
+      - "3000:3000"    # webUI (управление, предскачивание)
+      - "8080:80"      # nginx: меню netboot.xyz + ассеты (HTTP) для целевой машины
+      # 69/udp намеренно не публикуем — TFTP держит хостовый dnsmasq.
+    restart: unless-stopped
