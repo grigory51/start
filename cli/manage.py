@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import curses
 import io
 import json
 import os
@@ -824,6 +825,23 @@ class ManagerApp(App):
                 pass
 
 
+def _clear_if_no_altscreen() -> None:
+    """На терминалах без alternate screen (Linux-консоль tty) textual не восстанавливает
+    экран при выходе — кадр TUI остаётся. Чистим вручную. На терминалах с alt-screen
+    (iTerm/xterm/tmux) восстановление уже сработало — не вмешиваемся (по terminfo rmcup)."""
+    if not sys.stdout.isatty():
+        return
+    try:
+        curses.setupterm()
+        has_altscreen = bool(curses.tigetstr("rmcup"))
+    except Exception:
+        has_altscreen = True  # не смогли определить — не трогаем
+    if not has_altscreen:
+        sys.stdout.write("\x1b[2J\x1b[H")   # очистить экран + курсор в начало
+        sys.stdout.flush()
+
+
 def run_manage() -> int:
     ManagerApp().run()
+    _clear_if_no_altscreen()
     return 0

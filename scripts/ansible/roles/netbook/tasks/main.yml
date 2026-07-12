@@ -92,3 +92,9 @@
   ansible.builtin.copy:
     src: tmux.conf
     dest: "{{ ansible_env.HOME }}/.tmux.conf"
+
+- name: cheatsheet - ~/README.md (what is installed and how to use it)
+  become: false
+  ansible.builtin.copy:
+    src: README.md
+    dest: "{{ ansible_env.HOME }}/README.md"
