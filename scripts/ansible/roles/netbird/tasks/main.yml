@@ -35,6 +35,16 @@
     state: present
     update_cache: true
 
+# Default management server for `netbird up` (env-binding of --management-url). Stored
+# in config.json after the first `up`; this just sets the default so plain `netbird up`
+# points at the self-hosted server without typing --management-url.
+- name: netbird - default management URL (NB_MANAGEMENT_URL)
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/profile.d/netbird.sh
+    content: "export NB_MANAGEMENT_URL={{ netbird_management_url }}\n"
+    mode: "0644"
+
 # Some package versions don't register the systemd unit automatically; this is a no-op
 # when it already exists.
 - name: netbird - ensure service is installed

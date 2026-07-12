@@ -38,7 +38,7 @@ Mouse: wheel scrolls, drag selects (mouse enabled).
     mmcli -m 0           # modem details
     nmtui                # add a mobile-broadband connection
 
-## VPN mesh (netbird)
+## VPN mesh (netbird)  -- defaults to self-hosted https://netbird.ozhegov.name (NB_MANAGEMENT_URL)
     netbird up                       # connect / authenticate (SSO URL on headless, or --setup-key <key>)
     netbird status                   # connection + peers
     netbird down                     # disconnect

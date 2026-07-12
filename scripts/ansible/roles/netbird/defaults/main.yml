@@ -1,0 +1,4 @@
+---
+# Self-hosted NetBird management server. `netbird up` defaults to it via NB_MANAGEMENT_URL
+# (a per-machine /etc/profile.d export). Override per run: `netbird up --management-url ...`.
+netbird_management_url: "https://netbird.ozhegov.name"
