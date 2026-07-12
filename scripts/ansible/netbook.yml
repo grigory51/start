@@ -6,3 +6,4 @@
   gather_facts: true          # ansible_env.HOME needed for dotfiles
   roles:
     - netbook
+    - netbird

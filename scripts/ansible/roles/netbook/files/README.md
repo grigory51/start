@@ -38,6 +38,11 @@ Mouse: wheel scrolls, drag selects (mouse enabled).
     mmcli -m 0           # modem details
     nmtui                # add a mobile-broadband connection
 
+## VPN mesh (netbird)
+    netbird up                       # connect / authenticate (SSO URL on headless, or --setup-key <key>)
+    netbird status                   # connection + peers
+    netbird down                     # disconnect
+
 ## Remote access
     mosh user@host       # SSH that survives IP changes / high latency
 
@@ -52,6 +57,6 @@ Mouse: wheel scrolls, drag selects (mouse enabled).
 
 ## What is installed
 Terminal: tmux mosh mc fzf ripgrep fd-find bat htop ncdu bash-completion micro fbterm gpm
-Network:  network-manager tcpdump iproute2 mtr-tiny nmap ethtool iperf3 usb-modeswitch modemmanager
+Network:  network-manager tcpdump iproute2 mtr-tiny nmap ethtool iperf3 usb-modeswitch modemmanager netbird
 Tooling:  git make python3-venv python3-pip  (so `make` works via scripts/run.sh without uv)
 Locale/console: en_US.UTF-8 + ru_RU.UTF-8, Terminus console font (Cyrillic on tty)
