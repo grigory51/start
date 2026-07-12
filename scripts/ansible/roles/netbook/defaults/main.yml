@@ -31,6 +31,12 @@ netbook_packages:
   - python3-venv    # run CLI without uv (scripts/run.sh -> .venv)
   - python3-pip
 
+# Console font (console-setup). TerminusBold has Cyrillic and is readable on the small
+# screen; for a lighter weight set FONTFACE to "Terminus". Combined with CODESET=Uni2 and
+# FONTSIZE this maps to /usr/share/consolefonts/Uni2-{{face}}{{h}}.psf.gz.
+netbook_console_font_face: TerminusBold
+netbook_console_font_size: 8x16
+
 # Optional - installed one by one, do not fail if missing (name/availability varies by
 # Debian release).
 netbook_packages_optional:

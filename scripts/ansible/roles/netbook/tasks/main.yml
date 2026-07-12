@@ -49,10 +49,17 @@
     line: '{{ item.k }}="{{ item.v }}"'
     create: true
   loop:
+    - { k: CHARMAP,  v: UTF-8 }     # console in UTF-8 mode (else Cyrillic decodes wrong)
     - { k: CODESET,  v: Uni2 }      # Latin + Cyrillic + Greek
-    - { k: FONTFACE, v: Terminus }
-    - { k: FONTSIZE, v: 8x16 }
+    - { k: FONTFACE, v: "{{ netbook_console_font_face }}" }
+    - { k: FONTSIZE, v: "{{ netbook_console_font_size }}" }
   notify: setupcon
+
+- name: console - enable console-setup (applies the font on boot)
+  become: true
+  ansible.builtin.systemd:
+    name: console-setup.service
+    enabled: true
 
 - name: locale - default LANG (UTF-8)
   become: true
