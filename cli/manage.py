@@ -68,11 +68,11 @@ def _state_cells(enabled: bool, enabled_base: bool,
     оверрайд подсвечиваем cyan: именно он определяет итог, маскируя глобальное значение.
     """
     lamp = "💡" if enabled else "[dim]○[/]"
-    g = "[green]вкл[/]" if enabled_base else "[dim]выкл[/]"
+    g = "[green]on[/]" if enabled_base else "[dim]off[/]"
     if enabled_local is None:
         loc = "[dim]—[/]"
     else:
-        loc = "[cyan]вкл[/]" if enabled_local else "[cyan]выкл[/]"
+        loc = "[cyan]on[/]" if enabled_local else "[cyan]off[/]"
     return lamp, g, loc
 
 
@@ -100,7 +100,7 @@ class ContentScreen(ModalScreen):
     """Модалка с содержимым .md-файла (агент или скил). Esc/q/Enter — закрыть."""
 
     BINDINGS = [
-        Binding("escape,q,enter", "dismiss", "Закрыть", show=True),
+        Binding("escape,q,enter", "dismiss", "Close", show=True),
     ]
 
     def __init__(self, title: str, path: Path | None = None, *, text: str | None = None) -> None:
@@ -117,7 +117,7 @@ class ContentScreen(ModalScreen):
             try:
                 raw = self._path.read_text(errors="replace")
             except OSError as e:
-                text = f"# {self._title}\n\nНе удалось прочитать `{self._path}`:\n\n```\n{e}\n```"
+                text = f"# {self._title}\n\nFailed to read `{self._path}`:\n\n```\n{e}\n```"
             else:
                 # .json рендерим как code-fence (Markdown иначе схлопывает переносы);
                 # .md — как есть (это и есть markdown).
@@ -127,7 +127,7 @@ class ContentScreen(ModalScreen):
             yield Static(f"[b]{self._title}[/]  [dim]{subtitle}[/]", id="modal-title")
             with VerticalScroll(id="modal-scroll"):
                 yield Markdown(text)
-            yield Static("[dim]Esc / q / Enter — закрыть · ↑↓ PgUp/PgDn — скролл[/]",
+            yield Static("[dim]Esc / q / Enter — close · ↑↓ PgUp/PgDn — scroll[/]",
                          id="modal-hint")
 
     def action_dismiss(self, result=None) -> None:
@@ -143,20 +143,20 @@ class AddSubmoduleScreen(ModalScreen):
     """
 
     BINDINGS = [
-        Binding("escape", "cancel", "Отмена", show=True),
+        Binding("escape", "cancel", "Cancel", show=True),
     ]
 
     def compose(self) -> ComposeResult:
         with Container(id="modal-box"):
-            yield Static("[b]Добавить сабмодуль[/]", id="modal-title")
+            yield Static("[b]Add submodule[/]", id="modal-title")
             with VerticalScroll(id="modal-scroll"):
-                yield Static("URL git-репозитория со скилами:")
+                yield Static("Git repo URL with skills:")
                 yield Input(placeholder="https://github.com/owner/repo", id="sub-url")
-                yield Static("Имя папки в contrib/ [dim](пусто = из URL)[/]:")
-                yield Input(placeholder="(авто)", id="sub-name")
-                yield Static("Подпапка со скилами [dim](пусто = автодетект)[/]:")
-                yield Input(placeholder="(автодетект)", id="sub-subdir")
-            yield Static("[dim]Enter — добавить · Esc — отмена[/]", id="modal-hint")
+                yield Static("Folder name in contrib/ [dim](empty = from URL)[/]:")
+                yield Input(placeholder="(auto)", id="sub-name")
+                yield Static("Skills subdir [dim](empty = autodetect)[/]:")
+                yield Input(placeholder="(autodetect)", id="sub-subdir")
+            yield Static("[dim]Enter — add · Esc — cancel[/]", id="modal-hint")
 
     def on_mount(self) -> None:
         self.query_one("#sub-url", Input).focus()
@@ -167,7 +167,7 @@ class AddSubmoduleScreen(ModalScreen):
     def _submit(self) -> None:
         url = self.query_one("#sub-url", Input).value.strip()
         if not url:
-            self.query_one("#modal-hint", Static).update("[yellow]URL обязателен[/]")
+            self.query_one("#modal-hint", Static).update("[yellow]URL required[/]")
             return
         name = self.query_one("#sub-name", Input).value.strip() or None
         subdir = self.query_one("#sub-subdir", Input).value.strip()
@@ -192,8 +192,8 @@ class AgentsPane(TabPane):
 
     def on_mount(self) -> None:
         table = self.query_one("#agents-table", DataTable)
-        table.add_column("Агент", width=20)
-        table.add_column("Описание")
+        table.add_column("Agent", width=20)
+        table.add_column("Description")
         self._row_map = []
         last_source: str | None = None
         for a in config.load_agents():
@@ -225,8 +225,8 @@ class PluginsPane(TabPane):
     """
 
     BINDINGS = [
-        Binding("space,t", "toggle_local", "Вкл/выкл (локально)", show=True),
-        Binding("g", "toggle_global", "Вкл/выкл (глобально)", show=True),
+        Binding("space,t", "toggle_local", "Toggle (local)", show=True),
+        Binding("g", "toggle_global", "Toggle (global)", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -240,11 +240,11 @@ class PluginsPane(TabPane):
     def on_mount(self) -> None:
         table = self.query_one("#plugins-table", DataTable)
         table.add_column("💡", width=3)
-        table.add_column("Плагин (plugin@marketplace)", width=40)
-        table.add_column("Гл", width=5)
-        table.add_column("Лок", width=5)
+        table.add_column("Plugin (plugin@marketplace)", width=40)
+        table.add_column("Gl", width=5)
+        table.add_column("Loc", width=5)
         table.add_column("⚠", width=3)
-        table.add_column("Описание")
+        table.add_column("Description")
         self._reload()
 
     def _reload(self) -> None:
@@ -262,7 +262,7 @@ class PluginsPane(TabPane):
         if self._row_map:
             table.move_cursor(row=min(prev, len(self._row_map) - 1))
         if not plugins:
-            self._status("Нет [[plugins]]-источников в config.toml", warn=True)
+            self._status("No [[plugins]] sources in config.toml", warn=True)
 
     def _status(self, msg: str, *, warn: bool = False) -> None:
         st = self.query_one("#plugins-status", Static)
@@ -288,9 +288,9 @@ class PluginsPane(TabPane):
         config.set_plugin_enabled_local(p.source, enabled=new_enabled)
         if not new_enabled:  # эффективно выключен → снять stale HUD-флаг
             _clear_plugin_flag(p.plugin)
-        verb = "включён" if new_enabled else "выключен"
-        self._status(f"{p.ref} {verb} локально — пересобираю seed…")
-        self._rebuild_worker(f"{p.ref} {verb} (локально)")
+        verb = "enabled" if new_enabled else "disabled"
+        self._status(f"{p.ref} {verb} locally — rebuilding seed…")
+        self._rebuild_worker(f"{p.ref} {verb} (local)")
 
     def action_toggle_global(self) -> None:
         p = self._at_cursor()
@@ -302,10 +302,10 @@ class PluginsPane(TabPane):
         effective = p.enabled_local if p.enabled_local is not None else new_enabled
         if not effective:  # эффективно выключен → снять stale HUD-флаг
             _clear_plugin_flag(p.plugin)
-        verb = "включён" if new_enabled else "выключен"
-        masked = " (но локальный оверрайд активен)" if p.enabled_local is not None else ""
-        self._status(f"{p.ref} {verb} глобально{masked} — пересобираю seed…")
-        self._rebuild_worker(f"{p.ref} {verb} (глобально){masked}")
+        verb = "enabled" if new_enabled else "disabled"
+        masked = " (but local override active)" if p.enabled_local is not None else ""
+        self._status(f"{p.ref} {verb} globally{masked} — rebuilding seed…")
+        self._rebuild_worker(f"{p.ref} {verb} (global){masked}")
 
     @work(thread=True, exclusive=True)
     def _rebuild_worker(self, what: str) -> None:
@@ -318,9 +318,9 @@ class PluginsPane(TabPane):
 
     def _rebuild_done(self, what: str, errors: int) -> None:
         if errors:
-            self._status(f"{what}, но с предупреждениями ({errors}). Перезапусти claude.", warn=True)
+            self._status(f"{what}, but with warnings ({errors}). Restart claude.", warn=True)
         else:
-            self._status(f"{what} ✓ seed+settings обновлены. Перезапусти claude.")
+            self._status(f"{what} ✓ seed+settings updated. Restart claude.")
         self._reload()
 
 
@@ -333,8 +333,8 @@ class McpPane(TabPane):
     """
 
     BINDINGS = [
-        Binding("space,t", "toggle_local", "Вкл/выкл (локально)", show=True),
-        Binding("g", "toggle_global", "Вкл/выкл (глобально)", show=True),
+        Binding("space,t", "toggle_local", "Toggle (local)", show=True),
+        Binding("g", "toggle_global", "Toggle (global)", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -349,9 +349,9 @@ class McpPane(TabPane):
         table = self.query_one("#mcp-table", DataTable)
         table.add_column("💡", width=3)
         table.add_column("MCP", width=24)
-        table.add_column("Гл", width=5)
-        table.add_column("Лок", width=5)
-        table.add_column("Команда / URL")
+        table.add_column("Gl", width=5)
+        table.add_column("Loc", width=5)
+        table.add_column("Command / URL")
         self._reload()
 
     def _reload(self) -> None:
@@ -371,7 +371,7 @@ class McpPane(TabPane):
         if self._row_map:
             table.move_cursor(row=min(prev, len(self._row_map) - 1))
         elif not mcp:
-            self._status("Нет [[mcp]]-источников в config.toml", warn=True)
+            self._status("No [[mcp]] sources in config.toml", warn=True)
 
     def _status(self, msg: str, *, warn: bool = False) -> None:
         st = self.query_one("#mcp-status", Static)
@@ -406,10 +406,10 @@ class McpPane(TabPane):
         else:
             new_enabled = not m.enabled_base
             config.set_mcp_enabled(m.name, enabled=new_enabled)
-        verb = "включён" if new_enabled else "выключен"
-        scope = "локально" if local else "глобально"
-        masked = " (локальный оверрайд активен)" if (not local and m.enabled_local is not None) else ""
-        self._status(f"{m.name} {verb} {scope}{masked} — мержу ~/.claude.json…")
+        verb = "enabled" if new_enabled else "disabled"
+        scope = "locally" if local else "globally"
+        masked = " (local override active)" if (not local and m.enabled_local is not None) else ""
+        self._status(f"{m.name} {verb} {scope}{masked} — merging ~/.claude.json…")
         self._merge_worker(f"{m.name} {verb} {scope}{masked}")
 
     @work(thread=True, exclusive=True)
@@ -422,9 +422,9 @@ class McpPane(TabPane):
 
     def _merge_done(self, what: str, errors: int) -> None:
         if errors:
-            self._status(f"{what}, но с предупреждениями ({errors}). Перезапусти claude.", warn=True)
+            self._status(f"{what}, but with warnings ({errors}). Restart claude.", warn=True)
         else:
-            self._status(f"{what} ✓ ~/.claude.json обновлён. Перезапусти claude.")
+            self._status(f"{what} ✓ ~/.claude.json updated. Restart claude.")
         self._reload()
 
 
@@ -432,9 +432,9 @@ class SkillsPane(TabPane):
     """Просмотр + toggle. Enter открывает SKILL.md, Space/`t` переключает."""
 
     BINDINGS = [
-        Binding("space,t", "toggle_local", "Вкл/выкл (локально)", show=True),
-        Binding("g", "toggle_global", "Вкл/выкл (глобально)", show=True),
-        Binding("a", "add_submodule", "Добавить сабмодуль", show=True),
+        Binding("space,t", "toggle_local", "Toggle (local)", show=True),
+        Binding("g", "toggle_global", "Toggle (global)", show=True),
+        Binding("a", "add_submodule", "Add submodule", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -450,8 +450,8 @@ class SkillsPane(TabPane):
     def on_mount(self) -> None:
         table = self.query_one("#skills-table", DataTable)
         table.add_column("◉", width=3)
-        table.add_column("Скил", width=26)
-        table.add_column("Описание")
+        table.add_column("Skill", width=26)
+        table.add_column("Description")
         self._reload()
         table.focus()
 
@@ -529,8 +529,8 @@ class SkillsPane(TabPane):
             config.set_skill_enabled_local(skill.source, skill.name, enabled=new_enabled)
         else:
             config.set_skill_enabled(skill.source, skill.name, enabled=new_enabled)
-        verb = "включён" if new_enabled else "выключен"
-        scope = "локально" if local else "глобально"
+        verb = "enabled" if new_enabled else "disabled"
+        scope = "locally" if local else "globally"
         self._apply_and_report(f"{skill.name} {verb} {scope}")
 
     def _toggle_source(self, source: str, *, local: bool) -> None:
@@ -542,9 +542,9 @@ class SkillsPane(TabPane):
             config.set_source_enabled_local(source, enabled=new_enabled)
         else:
             config.set_source_enabled(source, enabled=new_enabled)
-        verb = "включён" if new_enabled else "выключен"
-        scope = "локально" if local else "глобально"
-        self._apply_and_report(f"источник {source} {verb} {scope} ({len(group)} скилов)")
+        verb = "enabled" if new_enabled else "disabled"
+        scope = "locally" if local else "globally"
+        self._apply_and_report(f"source {source} {verb} {scope} ({len(group)} skills)")
 
     def _apply_and_report(self, what: str) -> None:
         """install (без сабмодулей) + статус + перерисовка."""
@@ -553,9 +553,9 @@ class SkillsPane(TabPane):
             # Toggle loose-скила: пересборка seed/merge settings не нужна — быстрый путь.
             errors = run_up(skip_submodules=True, skip_seed=True, skip_settings=True, quiet=True)
         if errors:
-            self._status(f"{what}, но install с предупреждениями ({errors})", warn=True)
+            self._status(f"{what}, but install had warnings ({errors})", warn=True)
         else:
-            self._status(f"{what} ✓ symlink'и обновлены")
+            self._status(f"{what} ✓ symlinks updated")
         self._reload()
 
     def action_add_submodule(self) -> None:
@@ -564,7 +564,7 @@ class SkillsPane(TabPane):
     def _on_submodule_form(self, fields: dict | None) -> None:
         if not fields:  # отмена
             return
-        self._status(f"добавляю сабмодуль {fields['url']} …")
+        self._status(f"adding submodule {fields['url']} …")
         # git submodule add сетевой — может занять время; выполняем в thread-воркере,
         # чтобы не блокировать UI-поток. Результат рисуем через call_from_thread.
         self._add_submodule_worker(fields)
@@ -582,7 +582,7 @@ class SkillsPane(TabPane):
         if res.ok:
             msg = res.message
             if res.install_errors:
-                msg += f" (install: {res.install_errors} предупр.)"
+                msg += f" (install: {res.install_errors} warnings)"
             self._status(f"✓ {msg}")
             self._reload()
         else:
@@ -608,7 +608,7 @@ class FilesPane(Container):
 
     def on_mount(self) -> None:
         table = self.query_one("#files-table", DataTable)
-        table.add_column("Источник (репо)", width=28)
+        table.add_column("Source (repo)", width=28)
         table.add_column("→ $HOME", width=24)
         table.add_column("posthook")
         self._reload()
@@ -628,7 +628,7 @@ class FilesPane(Container):
         if warnings:
             st.update("[yellow]⚠ " + "; ".join(warnings[:3]) + "[/]")
         elif not entries:
-            st.update("[yellow]Нет [[files.dotfiles]]-записей в config.toml[/]")
+            st.update("[yellow]No [[files.dotfiles]] entries in config.toml[/]")
         else:
             st.update("")
 
@@ -657,7 +657,7 @@ class CommandsPane(Container):
     """
 
     BINDINGS = [
-        Binding("r,enter", "run", "Запустить", show=True),
+        Binding("r,enter", "run", "Run", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -671,8 +671,8 @@ class CommandsPane(Container):
     def on_mount(self) -> None:
         table = self.query_one("#commands-table", DataTable)
         table.add_column("💡", width=3)
-        table.add_column("Команда", width=26)
-        table.add_column("Запуск (эта ОС)")
+        table.add_column("Command", width=26)
+        table.add_column("Run (this OS)")
         self._reload()
 
     def _reload(self) -> None:
@@ -685,7 +685,7 @@ class CommandsPane(Container):
             cmd = t.command
             lamp = "💡" if cmd else "[dim]○[/]"
             title = t.title + (" [yellow]🔒[/]" if t.sudo else "")
-            run_cell = _truncate(cmd, 70) if cmd else "[dim]— нет варианта для этой ОС[/]"
+            run_cell = _truncate(cmd, 70) if cmd else "[dim]— no variant for this OS[/]"
             table.add_row(lamp, title, run_cell)
             self._row_map.append(t)
         if self._row_map:
@@ -694,9 +694,9 @@ class CommandsPane(Container):
         if warnings:
             st.update("[yellow]⚠ " + "; ".join(warnings[:3]) + "[/]")
         elif not tasks:
-            st.update("[yellow]Нет [[commands.tasks]] в config.toml[/]")
+            st.update("[yellow]No [[commands.tasks]] in config.toml[/]")
         else:
-            st.update("[dim]r / Enter — запустить выбранную команду[/]")
+            st.update("[dim]r / Enter — run selected command[/]")
 
     def _status(self, msg: str, *, warn: bool = False) -> None:
         self.query_one("#commands-status", Static).update(
@@ -718,7 +718,7 @@ class CommandsPane(Container):
             return
         cmd = t.command
         if cmd is None:
-            self._status(f"{t.title}: нет варианта под эту ОС ({sys.platform})", warn=True)
+            self._status(f"{t.title}: no variant for this OS ({sys.platform})", warn=True)
             return
         # Выходим из TUI на время запуска: команда получает реальный терминал (sudo
         # сможет спросить пароль), после — возвращаемся и показываем результат. Запуск в
@@ -731,20 +731,20 @@ class CommandsPane(Container):
             # Пауза перед возвратом: иначе TUI перерисуется поверх вывода и ошибку/итог
             # не успеть прочитать. Ждём Enter (Ctrl-D/Ctrl-C тоже возвращают).
             try:
-                input(f"\n[код {rc} — Enter, чтобы вернуться в менеджер]")
+                input(f"\n[exit {rc} — press Enter to return to manager]")
             except (EOFError, KeyboardInterrupt):
                 pass
         if rc == 0:
-            self._status(f"{t.title}: готово ✓")
+            self._status(f"{t.title}: done ✓")
         else:
-            self._status(f"{t.title}: завершилась с кодом {rc}", warn=True)
+            self._status(f"{t.title}: exited with code {rc}", warn=True)
 
 
 # Домены верхнего уровня: (id контента, подпись). Порядок = порядок цикла по F2.
 _DOMAINS = [
     ("dom-claude", "Claude"),
     ("dom-files", "Files"),
-    ("dom-commands", "Команды"),
+    ("dom-commands", "Commands"),
 ]
 
 
@@ -752,7 +752,7 @@ class ManagerApp(App):
     """Корневое приложение: домены Claude (Агенты/Скилы/Плагины/MCP), Files (dotfiles),
     Команды (разовые действия). Переключение доменов — F2 (norton-стиль)."""
 
-    TITLE = "start — менеджер (Claude · Files · Команды)"
+    TITLE = "start — manager (Claude · Files · Commands)"
 
     CSS = """
     Screen { layout: vertical; }
@@ -778,8 +778,8 @@ class ManagerApp(App):
     """
 
     BINDINGS = [
-        Binding("q,escape", "quit", "Выход", show=True),
-        Binding("f2", "toggle_domain", "Домен ⇄", show=True),
+        Binding("q,escape", "quit", "Quit", show=True),
+        Binding("f2", "toggle_domain", "Domain ⇄", show=True),
     ]
 
     def compose(self) -> ComposeResult:
@@ -791,9 +791,9 @@ class ManagerApp(App):
             yield Static(self._domain_bar_text("dom-claude"), id="domain-bar")
             with ContentSwitcher(initial="dom-claude", id="domains"):
                 with TabbedContent(id="dom-claude"):
-                    yield AgentsPane("Агенты", id="tab-agents")
-                    yield SkillsPane("Скилы", id="tab-skills")
-                    yield PluginsPane("Плагины", id="tab-plugins")
+                    yield AgentsPane("Agents", id="tab-agents")
+                    yield SkillsPane("Skills", id="tab-skills")
+                    yield PluginsPane("Plugins", id="tab-plugins")
                     yield McpPane("MCP", id="tab-mcp")
                 yield FilesPane(id="dom-files")
                 yield CommandsPane(id="dom-commands")
@@ -801,11 +801,10 @@ class ManagerApp(App):
 
     @staticmethod
     def _domain_bar_text(current: str) -> str:
-        """Плашка доменов: активный — инверсией, прочие — тускло. Хинт про F2."""
-        cells = "".join(
+        """Плашка доменов: активный — инверсией, прочие — тускло. Биндинг F2 виден в футере."""
+        return "".join(
             f"[b reverse] {label} [/]" if dom == current else f"[dim] {label} [/]"
             for dom, label in _DOMAINS)
-        return cells + "   [dim]F2 — переключить домен[/]"
 
     def action_toggle_domain(self) -> None:
         cs = self.query_one("#domains", ContentSwitcher)

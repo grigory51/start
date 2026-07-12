@@ -13,8 +13,8 @@ netbook_packages:
   - bash-completion
   - command-not-found
   - micro
-  - tldr
   - locales
+  - console-setup   # консольный шрифт (кириллица на tty)
   - gpm             # мышь на консоли (tty)
   - network-manager # Wi-Fi: nmtui/nmcli
   - tcpdump         # дебаг сети
@@ -30,6 +30,8 @@ netbook_packages:
   - python3-venv    # fallback-запуск CLI без uv (scripts/run.sh → .venv)
   - python3-pip
 
-# Опциональные — ставим по одному, не валясь, если нет в репозитории (напр. fbterm выпилен).
+# Опциональные — ставим по одному, не валясь, если нет в репозитории (имя/наличие
+# зависит от версии Debian).
 netbook_packages_optional:
   - fbterm          # framebuffer-терминал (скроллбэк/шрифты/мышь на консоли)
+  - tldr            # шпаргалки по командам (в части релизов пакета нет / зовётся иначе)

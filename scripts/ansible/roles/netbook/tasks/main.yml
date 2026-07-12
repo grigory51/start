@@ -29,6 +29,24 @@
     - ru_RU.UTF-8
   notify: locale-gen
 
+- name: Консоль — шрифт с кириллицей (иначе русский вывод = ромбики на tty)
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/default/console-setup
+    regexp: '^{{ item.k }}='
+    line: '{{ item.k }}="{{ item.v }}"'
+    create: true
+  loop:
+    - { k: CODESET,  v: Uni2 }      # Latin+Cyrillic+Greek
+    - { k: FONTFACE, v: Terminus }
+    - { k: FONTSIZE, v: 8x16 }
+  notify: setupcon
+
+- name: Локаль — дефолтный LANG (UTF-8)
+  become: true
+  ansible.builtin.command: update-locale LANG=en_US.UTF-8
+  changed_when: false
+
 - name: Сервисы — включить и запустить gpm и NetworkManager
   become: true
   ansible.builtin.systemd:
