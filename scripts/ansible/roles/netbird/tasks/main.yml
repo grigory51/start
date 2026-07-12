@@ -35,14 +35,17 @@
     state: present
     update_cache: true
 
-# Default management server for `netbird up` (env-binding of --management-url). Stored
-# in config.json after the first `up`; this just sets the default so plain `netbird up`
-# points at the self-hosted server without typing --management-url.
-- name: netbird - default management URL (NB_MANAGEMENT_URL)
+# Defaults for `netbird up` via NB_-prefixed env (every netbird flag has an env binding:
+# NB_<FLAG>, dashes -> underscores). So plain `netbird up` in a login shell points at the
+# self-hosted server and enables the built-in SSH server, without typing the flags.
+# Stored into config.json after the first `up`.
+- name: netbird - default env for `netbird up` (management URL + SSH server)
   become: true
   ansible.builtin.copy:
     dest: /etc/profile.d/netbird.sh
-    content: "export NB_MANAGEMENT_URL={{ netbird_management_url }}\n"
+    content: |
+      export NB_MANAGEMENT_URL={{ netbird_management_url }}
+      export NB_ALLOW_SERVER_SSH={{ 'true' if netbird_allow_server_ssh else 'false' }}
     mode: "0644"
 
 # Some package versions don't register the systemd unit automatically; this is a no-op

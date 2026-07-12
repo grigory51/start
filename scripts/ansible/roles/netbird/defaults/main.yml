@@ -2,3 +2,8 @@
 # Self-hosted NetBird management server. `netbird up` defaults to it via NB_MANAGEMENT_URL
 # (a per-machine /etc/profile.d export). Override per run: `netbird up --management-url ...`.
 netbird_management_url: "https://netbird.ozhegov.name"
+
+# Enable NetBird's built-in SSH server on this peer by default (NB_ALLOW_SERVER_SSH).
+# Then reach it from another peer: `netbird ssh <peer>`. Extra capabilities (root/sftp/
+# port-forwarding) stay opt-in via their own --enable-ssh-* flags.
+netbird_allow_server_ssh: true

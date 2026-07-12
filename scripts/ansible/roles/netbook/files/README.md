@@ -38,10 +38,12 @@ Mouse: wheel scrolls, drag selects (mouse enabled).
     mmcli -m 0           # modem details
     nmtui                # add a mobile-broadband connection
 
-## VPN mesh (netbird)  -- defaults to self-hosted https://netbird.ozhegov.name (NB_MANAGEMENT_URL)
+## VPN mesh (netbird)  -- defaults to self-hosted https://netbird.ozhegov.name; SSH server on
     netbird up                       # connect / authenticate (SSO URL on headless, or --setup-key <key>)
     netbird status                   # connection + peers
     netbird down                     # disconnect
+    netbird ssh <peer>               # SSH to a peer over the mesh (built-in SSH server, no port 22)
+    # extra SSH server caps are opt-in: netbird up --enable-ssh-sftp --enable-ssh-root ...
 
 ## Remote access
     mosh user@host       # SSH that survives IP changes / high latency
