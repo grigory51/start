@@ -27,7 +27,19 @@
   loop:
     - en_US.UTF-8
     - ru_RU.UTF-8
-  notify: locale-gen
+
+- name: locales - list already generated
+  ansible.builtin.command: locale -a
+  register: locales_avail
+  changed_when: false
+
+# Must run BEFORE update-locale as a regular task (not a handler): a handler runs at the
+# end of the play, so LANG would be set to a not-yet-generated locale (Can not set LC_ALL).
+- name: locales - generate (if en_US.UTF-8 is missing)
+  become: true
+  ansible.builtin.command: locale-gen
+  when: "'en_US.utf8' not in locales_avail.stdout"
+  changed_when: true
 
 - name: console - font with Cyrillic glyphs (readable non-ASCII on tty)
   become: true
