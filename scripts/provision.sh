@@ -9,21 +9,21 @@
 #   bash scripts/provision.sh netbook
 set -euo pipefail
 
-[ "$(uname -s)" = Linux ] || { echo "Только для Linux. Текущая ОС: $(uname -s)"; exit 1; }
+[ "$(uname -s)" = Linux ] || { echo "Linux only. Current OS: $(uname -s)"; exit 1; }
 
 ROLE="${1:-}"
-[ -n "$ROLE" ] || { echo "Использование: provision.sh <role>  (напр. netbook)"; exit 2; }
+[ -n "$ROLE" ] || { echo "Usage: provision.sh <role>  (e.g. netbook)"; exit 2; }
 
 REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DIR="$REPO/scripts/ansible"
 if [ ! -f "$DIR/$ROLE.yml" ]; then
-    echo "Нет плейбука $DIR/$ROLE.yml. Доступные роли:"
+    echo "No playbook $DIR/$ROLE.yml. Available roles:"
     ls "$DIR"/*.yml 2>/dev/null | xargs -n1 basename | sed 's/\.yml$//' || true
     exit 2
 fi
 
 if ! command -v ansible-playbook >/dev/null 2>&1; then
-    echo "==> ansible не найден — ставлю (apt)…"
+    echo "==> ansible not found - installing (apt)..."
     sudo apt-get update && sudo apt-get install -y ansible
 fi
 

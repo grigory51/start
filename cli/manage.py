@@ -726,7 +726,11 @@ class CommandsPane(Container):
         # репо (напр. "$REPO/scripts/...") независимо от cwd запуска manage.
         env = {**os.environ, "REPO": str(config.REPO_DIR)}
         with self.app.suspend():
-            print(f"\n$ {cmd}\n")
+            # app.suspend() не чистит обычный буфер терминала — вывод команды лёг бы
+            # поверх кадра TUI. Чистим экран + scrollback явно (ANSI): 2J экран, 3J
+            # историю, H — курсор в начало.
+            print("\x1b[2J\x1b[3J\x1b[H", end="", flush=True)
+            print(f"$ {cmd}\n")
             rc = subprocess.run(cmd, shell=True, cwd=config.REPO_DIR, env=env).returncode
             # Пауза перед возвратом: иначе TUI перерисуется поверх вывода и ошибку/итог
             # не успеть прочитать. Ждём Enter (Ctrl-D/Ctrl-C тоже возвращают).

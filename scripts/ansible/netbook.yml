@@ -1,8 +1,8 @@
 ---
-# Плейбук обустройства headless-Debian нетбука. Применяется ЛОКАЛЬНО
-# (scripts/provision.sh netbook → ansible-playbook -i 'localhost,' -c local netbook.yml).
-- name: Обустроить нетбук (Debian, headless)
+# Playbook to provision a headless Debian netbook. Applied LOCALLY
+# (scripts/provision.sh netbook -> ansible-playbook -i 'localhost,' -c local netbook.yml).
+- name: Provision netbook (Debian, headless)
   hosts: all
-  gather_facts: true          # нужен ansible_env.HOME для dotfiles
+  gather_facts: true          # ansible_env.HOME needed for dotfiles
   roles:
     - netbook

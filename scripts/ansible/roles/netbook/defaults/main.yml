@@ -1,10 +1,10 @@
 ---
-# Пакеты для headless-Debian нетбука: терминал QoL, Wi-Fi-менеджер, дебаг сети, 3G-модем.
+# Packages for a headless Debian netbook: terminal QoL, Wi-Fi manager, net debug, 3G modem.
 netbook_packages:
-  - tmux            # персистентные сессии/сплиты/скроллбэк
-  - mosh            # SSH поверх нестабильного канала (пригодится для 3G-шлюза)
-  - mc              # Midnight Commander (norton-стиль)
-  - fzf             # фаззи-поиск (Ctrl-R/Ctrl-T)
+  - tmux            # persistent sessions/splits/scrollback
+  - mosh            # SSH over flaky links (handy for the 3G gateway)
+  - mc              # Midnight Commander (norton-style)
+  - fzf             # fuzzy finder (Ctrl-R/Ctrl-T)
   - ripgrep
   - fd-find
   - bat
@@ -14,24 +14,24 @@ netbook_packages:
   - command-not-found
   - micro
   - locales
-  - console-setup   # консольный шрифт (кириллица на tty)
-  - gpm             # мышь на консоли (tty)
+  - console-setup   # console font (Cyrillic on tty)
+  - gpm             # mouse on the console (tty)
   - network-manager # Wi-Fi: nmtui/nmcli
-  - tcpdump         # дебаг сети
+  - tcpdump         # net debug
   - iproute2
   - mtr-tiny
   - nmap
   - ethtool
   - iperf3
-  - usb-modeswitch  # 3G-модем
+  - usb-modeswitch  # 3G modem
   - modemmanager
-  - git             # клонировать репо start
-  - make            # make-цели
-  - python3-venv    # fallback-запуск CLI без uv (scripts/run.sh → .venv)
+  - git             # clone the start repo
+  - make            # make targets
+  - python3-venv    # run CLI without uv (scripts/run.sh -> .venv)
   - python3-pip
 
-# Опциональные — ставим по одному, не валясь, если нет в репозитории (имя/наличие
-# зависит от версии Debian).
+# Optional - installed one by one, do not fail if missing (name/availability varies by
+# Debian release).
 netbook_packages_optional:
-  - fbterm          # framebuffer-терминал (скроллбэк/шрифты/мышь на консоли)
-  - tldr            # шпаргалки по командам (в части релизов пакета нет / зовётся иначе)
+  - fbterm          # framebuffer terminal (scrollback/fonts/mouse on console)
+  - tldr            # command cheatsheets (missing/renamed in some releases)

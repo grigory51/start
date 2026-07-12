@@ -1,8 +1,8 @@
 ---
-# Обустройство headless-Debian нетбука (применяется через scripts/provision.sh netbook).
-# apt/локали/сервисы — под become; dotfiles — от текущего пользователя (become: false).
+# Provision a headless Debian netbook (applied via scripts/provision.sh netbook).
+# apt/locales/services run under become; dotfiles run as the current user (become: false).
 
-- name: apt — поставить основные пакеты (кеш свежий)
+- name: apt - install core packages (fresh cache)
   become: true
   ansible.builtin.apt:
     name: "{{ netbook_packages }}"
@@ -10,7 +10,7 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: apt — опциональные пакеты (не валимся, если нет в репозитории)
+- name: apt - optional packages (do not fail if missing in repo)
   become: true
   ansible.builtin.apt:
     name: "{{ item }}"
@@ -18,7 +18,7 @@
   loop: "{{ netbook_packages_optional }}"
   failed_when: false
 
-- name: Локали — раскомментировать en_US/ru_RU в /etc/locale.gen
+- name: locales - uncomment en_US/ru_RU in /etc/locale.gen
   become: true
   ansible.builtin.lineinfile:
     path: /etc/locale.gen
@@ -29,7 +29,7 @@
     - ru_RU.UTF-8
   notify: locale-gen
 
-- name: Консоль — шрифт с кириллицей (иначе русский вывод = ромбики на tty)
+- name: console - font with Cyrillic glyphs (readable non-ASCII on tty)
   become: true
   ansible.builtin.lineinfile:
     path: /etc/default/console-setup
@@ -37,17 +37,17 @@
     line: '{{ item.k }}="{{ item.v }}"'
     create: true
   loop:
-    - { k: CODESET,  v: Uni2 }      # Latin+Cyrillic+Greek
+    - { k: CODESET,  v: Uni2 }      # Latin + Cyrillic + Greek
     - { k: FONTFACE, v: Terminus }
     - { k: FONTSIZE, v: 8x16 }
   notify: setupcon
 
-- name: Локаль — дефолтный LANG (UTF-8)
+- name: locale - default LANG (UTF-8)
   become: true
   ansible.builtin.command: update-locale LANG=en_US.UTF-8
   changed_when: false
 
-- name: Сервисы — включить и запустить gpm и NetworkManager
+- name: services - enable and start gpm and NetworkManager
   become: true
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -57,7 +57,7 @@
     - gpm
     - NetworkManager
 
-- name: dotfiles — блок настроек в ~/.bashrc (идемпотентно)
+- name: dotfiles - settings block in ~/.bashrc (idempotent)
   become: false
   ansible.builtin.blockinfile:
     path: "{{ ansible_env.HOME }}/.bashrc"
@@ -67,7 +67,7 @@
       HISTSIZE=100000; HISTFILESIZE=200000; HISTCONTROL=ignoreboth
       shopt -s histappend checkwinsize autocd cdspell
       PROMPT_COMMAND='history -a'
-      # sbin в PATH юзеру (Debian их не кладёт) — для сетевых утилит: ip/ss/ethtool/…
+      # sbin in PATH for the user (Debian omits it) - net tools: ip/ss/ethtool/...
       case ":$PATH:" in *:/usr/sbin:*) ;; *) export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin";; esac
       alias ll='ls -lah --color=auto'
       alias bat='batcat'; alias fd='fdfind'
@@ -75,7 +75,7 @@
       [ -f /usr/share/doc/fzf/examples/key-bindings.bash ] && . /usr/share/doc/fzf/examples/key-bindings.bash
       [ -f /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion
 
-- name: dotfiles — ~/.tmux.conf (управляется ролью)
+- name: dotfiles - ~/.tmux.conf (managed by role)
   become: false
   ansible.builtin.copy:
     src: tmux.conf
