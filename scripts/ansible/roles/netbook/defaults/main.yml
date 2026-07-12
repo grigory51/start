@@ -25,6 +25,10 @@ netbook_packages:
   - iperf3
   - usb-modeswitch  # 3G-модем
   - modemmanager
+  - git             # клонировать репо start
+  - make            # make-цели
+  - python3-venv    # fallback-запуск CLI без uv (scripts/run.sh → .venv)
+  - python3-pip
 
 # Опциональные — ставим по одному, не валясь, если нет в репозитории (напр. fbterm выпилен).
 netbook_packages_optional:

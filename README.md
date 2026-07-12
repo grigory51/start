@@ -21,6 +21,8 @@ make up
 
 Всё гоняется через [`uv`](https://docs.astral.sh/uv/) — он сам поднимает venv и тянет зависимости (`textual`, `tomlkit`). Отдельно ставить ничего не нужно. `make up` обновляет сабмодули (`contrib/`), собирает plugin seed и раскладывает symlink'и в оба домена.
 
+`make`-цели зовут не `uv` напрямую, а обёртку `scripts/run.sh`: она предпочитает `uv`, а на машинах без него (напр. Debian-нетбук) разово поднимает локальный `.venv` (`python3 -m venv` + `pip install -e .`) и гоняет CLI через него. Так `make manage`/`make files` работают и без `uv` — нужен лишь `python3` (+ `python3-venv`/`python3-pip`).
+
 Синхронизация разбита на два **домена**: **Claude** (`~/.claude`: агенты, скилы, плагины, hooks, CLAUDE.md, rules, statusline, settings) и **Files** (`$HOME`: `[[files.dotfiles]]`). В выводе они разделены заголовками (`══ Claude ══` / `══ Files ══`); можно гонять по отдельности.
 
 | Цель | Что |

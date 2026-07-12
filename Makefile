@@ -7,29 +7,33 @@
 # no-op правилом ниже, чтобы make не ругался «No rule to make target».
 ARGS := $(filter-out up claude files manage seed settings,$(MAKECMDGOALS))
 
+# START — обёртка запуска CLI: сама выбирает uv, а без него поднимает локальный .venv
+# (см. scripts/run.sh). Чтобы `make …` работал и на машинах без uv (напр. Debian-нетбук).
+START := ./scripts/run.sh
+
 # up — полная синхронизация обоих доменов: Claude + Files.
 up:
-	uv run start up $(ARGS)
+	$(START) up $(ARGS)
 
 # claude — только домен Claude (~/.claude): сабмодули + seed + symlink'и + settings.
 claude:
-	uv run start up --only claude $(ARGS)
+	$(START) up --only claude $(ARGS)
 
 # files — только домен Files ($HOME): симлинки [[dotfiles]] (без сабмодулей/seed/settings).
 files:
-	uv run start up --only files $(ARGS)
+	$(START) up --only files $(ARGS)
 
 # manage — TUI: просмотр агентов/плагинов, включение/выключение скилов.
 manage:
-	uv run start manage $(ARGS)
+	$(START) manage $(ARGS)
 
 # seed — пересобрать plugin seed (.seed/) + merge settings.
 seed:
-	uv run start seed $(ARGS)
+	$(START) seed $(ARGS)
 
 # settings — показать diff managed-ключей settings.json (без записи).
 settings:
-	uv run start settings --dry-run $(ARGS)
+	$(START) settings --dry-run $(ARGS)
 
 # Проглотить проброшенные флаги (goals после `--`), чтобы make не искал под них цель.
 ifneq ($(ARGS),)
