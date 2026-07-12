@@ -1,0 +1,62 @@
+---
+# Обустройство headless-Debian нетбука (применяется через scripts/provision.sh netbook).
+# apt/локали/сервисы — под become; dotfiles — от текущего пользователя (become: false).
+
+- name: apt — поставить основные пакеты (кеш свежий)
+  become: true
+  ansible.builtin.apt:
+    name: "{{ netbook_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: apt — опциональные пакеты (не валимся, если нет в репозитории)
+  become: true
+  ansible.builtin.apt:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ netbook_packages_optional }}"
+  failed_when: false
+
+- name: Локали — раскомментировать en_US/ru_RU в /etc/locale.gen
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/locale.gen
+    regexp: '^# *{{ item }} UTF-8'
+    line: '{{ item }} UTF-8'
+  loop:
+    - en_US.UTF-8
+    - ru_RU.UTF-8
+  notify: locale-gen
+
+- name: Сервисы — включить и запустить gpm и NetworkManager
+  become: true
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - gpm
+    - NetworkManager
+
+- name: dotfiles — блок настроек в ~/.bashrc (идемпотентно)
+  become: false
+  ansible.builtin.blockinfile:
+    path: "{{ ansible_env.HOME }}/.bashrc"
+    create: true
+    marker: "# {mark} netbook-provision"
+    block: |
+      HISTSIZE=100000; HISTFILESIZE=200000; HISTCONTROL=ignoreboth
+      shopt -s histappend checkwinsize autocd cdspell
+      PROMPT_COMMAND='history -a'
+      alias ll='ls -lah --color=auto'
+      alias bat='batcat'; alias fd='fdfind'
+      alias grep='grep --color=auto'
+      [ -f /usr/share/doc/fzf/examples/key-bindings.bash ] && . /usr/share/doc/fzf/examples/key-bindings.bash
+      [ -f /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion
+
+- name: dotfiles — ~/.tmux.conf (управляется ролью)
+  become: false
+  ansible.builtin.copy:
+    src: tmux.conf
+    dest: "{{ ansible_env.HOME }}/.tmux.conf"

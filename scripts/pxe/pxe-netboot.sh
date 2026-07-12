@@ -7,14 +7,14 @@
 # интернет ей не нужен.
 #
 # Запускается из домена «Команды» TUI (uv run start manage → F2 «Команды»): env REPO —
-# корень репо, cwd — тоже репо. Можно и вручную: bash scripts/pxe-netboot.sh
+# корень репо, cwd — тоже репо. Можно и вручную: bash scripts/pxe/pxe-netboot.sh
 #
 # Роли под OrbStack (Linux-VM без bridged-L2 к en0): dnsmasq — нативно на хосте (broadcast
 # proxyDHCP по физическому интерфейсу), контейнер — unicast HTTP через published-порты
 # (нужно включить «Expose ports to LAN» в OrbStack). См. scripts/pxe/docker-compose.yml.
 set -euo pipefail
 
-REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 COMPOSE_FILE="$REPO/scripts/pxe/docker-compose.yml"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/start-pxe"
 CONFIG_DIR="$CACHE/config"
@@ -22,6 +22,17 @@ NGINX_PORT=8080          # host-порт nginx контейнера (см. docke
 WEBUI_URL="http://localhost:3000"
 
 die() { echo "Ошибка: $*" >&2; exit 1; }
+
+# Останов при выходе: гасим dnsmasq (он foreground — сам умрёт) и контейнер netboot.xyz.
+# Идемпотентно (флаг _stopped) — трап на INT/TERM/EXIT может сработать не раз. Кеш ассетов
+# в host-томах (~/.cache/start-pxe) переживает `down`, повторный up быстрый.
+stop_all() {
+    [ "${_stopped:-0}" = 1 ] && return 0
+    _stopped=1
+    echo
+    echo "==> Останавливаю dnsmasq и контейнер netboot.xyz…"
+    docker compose -f "$COMPOSE_FILE" down >/dev/null 2>&1 || true
+}
 
 # --- 1. Preflight: внешние зависимости ---------------------------------------
 command -v docker  >/dev/null || die "нет docker (нужен OrbStack/Docker). Поставь OrbStack: https://orbstack.dev"
@@ -98,12 +109,15 @@ cat <<EOF
     Замечания:
       • Secure Boot может блокировать неподписанный iPXE — отключи в UEFI, если не грузится.
       • macOS Internet Sharing поднимает bootpd на udp/67 → конфликт: выключи его.
-    Ctrl-C — остановить dnsmasq (контейнер и кеш остаются).
+      • macOS Application Firewall режет входящие к dnsmasq (симптом: пусто в логах,
+        «No boot filename») — разреши dnsmasq: Настройки → Сеть → Файрвол → Параметры
+        (или на время выключи файрвол).
+    Ctrl-C — остановить: гасим dnsmasq и контейнер netboot.xyz (кеш ассетов сохраняется).
 
 EOF
 
 # --- 6. dnsmasq: proxyDHCP + TFTP (foreground, эфемерно) ---------------------
-trap 'echo; echo "==> dnsmasq остановлен. Контейнер netboot.xyz оставлен (docker compose -f \"$COMPOSE_FILE\" down — чтобы погасить)."' INT TERM EXIT
+trap stop_all INT TERM EXIT
 
     # Без --bind-interfaces: на macOS он бы забиндил unicast-адрес интерфейса, а
     # DHCP-DISCOVER летит broadcast'ом на 255.255.255.255 — на такой сокет не приходит

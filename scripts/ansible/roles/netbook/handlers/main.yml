@@ -1,0 +1,5 @@
+---
+- name: locale-gen
+  become: true
+  ansible.builtin.command: locale-gen
+  changed_when: true

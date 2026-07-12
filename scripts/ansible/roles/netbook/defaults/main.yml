@@ -1,0 +1,31 @@
+---
+# Пакеты для headless-Debian нетбука: терминал QoL, Wi-Fi-менеджер, дебаг сети, 3G-модем.
+netbook_packages:
+  - tmux            # персистентные сессии/сплиты/скроллбэк
+  - mosh            # SSH поверх нестабильного канала (пригодится для 3G-шлюза)
+  - mc              # Midnight Commander (norton-стиль)
+  - fzf             # фаззи-поиск (Ctrl-R/Ctrl-T)
+  - ripgrep
+  - fd-find
+  - bat
+  - htop
+  - ncdu
+  - bash-completion
+  - command-not-found
+  - micro
+  - tldr
+  - locales
+  - gpm             # мышь на консоли (tty)
+  - network-manager # Wi-Fi: nmtui/nmcli
+  - tcpdump         # дебаг сети
+  - iproute2
+  - mtr-tiny
+  - nmap
+  - ethtool
+  - iperf3
+  - usb-modeswitch  # 3G-модем
+  - modemmanager
+
+# Опциональные — ставим по одному, не валясь, если нет в репозитории (напр. fbterm выпилен).
+netbook_packages_optional:
+  - fbterm          # framebuffer-терминал (скроллбэк/шрифты/мышь на консоли)

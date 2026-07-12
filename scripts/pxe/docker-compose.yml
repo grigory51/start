@@ -1,10 +1,10 @@
 # netboot.xyz, self-hosted — локальный PXE-стек для домена «Команды» (см.
-# scripts/pxe-netboot.sh). Даёт webUI (управление/предскачивание), локальное меню и
+# scripts/pxe/pxe-netboot.sh). Даёт webUI (управление/предскачивание), локальное меню и
 # nginx-раздачу ассетов. Цель — ставить машины БЕЗ интернета на них: всё тянется с Mac.
 #
 # Роли под OrbStack (Linux-VM, без bridged-L2 к en0):
 #   • DHCP/proxyDHCP — НЕ здесь: broadcast из контейнера до физического сегмента не дойдёт.
-#     Его держит нативный dnsmasq на хосте (scripts/pxe-netboot.sh).
+#     Его держит нативный dnsmasq на хосте (scripts/pxe/pxe-netboot.sh).
 #   • Этот контейнер — HTTP/меню/ассеты (unicast). Чтобы целевая машина достала их по
 #     <MacIP>:<port>, в OrbStack включи «Expose ports to LAN» (Settings → Network).
 #
