@@ -29,7 +29,7 @@ Mouse: wheel scrolls, drag selects (mouse enabled).
     ncdu                 # disk usage browser
 
 ## Network debug (sbin is in PATH via ~/.bashrc)
-    ip a ; ip r ; ss -tulpn
+    ip a ; ip r ; ss -tulpn        # (or legacy: ifconfig ; route -n ; netstat -tulpn)
     tcpdump -ni <iface> 'port 67 or port 68'
     mtr <host> ; nmap <host> ; ethtool <iface> ; iperf3 -c <host>
 

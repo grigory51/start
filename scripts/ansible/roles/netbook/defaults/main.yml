@@ -18,6 +18,7 @@ netbook_packages:
   - gpm             # mouse on the console (tty)
   - network-manager # Wi-Fi: nmtui/nmcli
   - tcpdump         # net debug
+  - net-tools       # ifconfig/route/netstat (legacy)
   - iproute2
   - mtr-tiny
   - nmap
