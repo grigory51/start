@@ -31,10 +31,10 @@ netbook_packages:
   - python3-venv    # run CLI without uv (scripts/run.sh -> .venv)
   - python3-pip
 
-# Console font (console-setup). TerminusBold has Cyrillic and is readable on the small
-# screen; for a lighter weight set FONTFACE to "Terminus". Combined with CODESET=Uni2 and
-# FONTSIZE this maps to /usr/share/consolefonts/Uni2-{{face}}{{h}}.psf.gz.
-netbook_console_font_face: TerminusBold
+# Console font (console-setup). Regular Terminus (Cyrillic-capable); set to "TerminusBold"
+# for a heavier weight. Combined with CODESET=Uni2 and FONTSIZE this maps to
+# /usr/share/consolefonts/Uni2-{{face}}{{h}}.psf.gz.
+netbook_console_font_face: Terminus
 netbook_console_font_size: 8x16
 
 # Optional - installed one by one, do not fail if missing (name/availability varies by
