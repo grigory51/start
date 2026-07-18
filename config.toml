@@ -109,10 +109,6 @@ path = "contrib/infostyle-skill"
 enabled = true
 
 [[claude.plugins]]
-path = "contrib/caveman"
-enabled = false
-
-[[claude.plugins]]
 path = "contrib/text-to-cad"
 enabled = true
 
@@ -294,3 +290,18 @@ description = "Ansible-роль netbook локально: терминал + Wi-
 sudo = true
 [commands.tasks.run]
 linux = 'bash "$REPO/scripts/provision.sh" netbook'
+
+# tcp-listen — слушающие TCP-порты (lsof). Интерактивно спрашивает порт: пусто — все,
+# число — фильтр по порту. Замена алиасу `sudo lsof -iTCP -sTCP:LISTEN -n -P` + grep.
+[[commands.tasks]]
+name = "tcp-listen"
+title = "Слушающие TCP-порты"
+description = "lsof по слушающим TCP-портам. Спрашивает порт: Enter — все, число — фильтр по порту."
+sudo = true
+[commands.tasks.run]
+darwin = 'bash "$REPO/scripts/tcp-listen.sh"'
+linux = 'bash "$REPO/scripts/tcp-listen.sh"'
+
+[[claude.plugins]]
+path = "contrib/Understand-Anything"
+enabled = true

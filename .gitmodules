@@ -7,9 +7,6 @@
 [submodule "contrib/claude-seo"]
 	path = contrib/claude-seo
 	url = https://github.com/AgriciDaniel/claude-seo
-[submodule "contrib/caveman"]
-	path = contrib/caveman
-	url = git@github.com:grigory51/caveman.git
 [submodule "contrib/ast-index"]
 	path = contrib/ast-index
 	url = https://github.com/defendend/Claude-ast-index-search
@@ -28,3 +25,6 @@
 [submodule "contrib/ui-ux-pro-max-skill"]
 	path = contrib/ui-ux-pro-max-skill
 	url = https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
+[submodule "contrib/Understand-Anything"]
+	path = contrib/Understand-Anything
+	url = https://github.com/Egonex-AI/Understand-Anything
