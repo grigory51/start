@@ -752,6 +752,18 @@ _DOMAINS = [
     ("dom-commands", "Commands"),
 ]
 
+# Быстрый переход (`start m-<name>`): дружественное имя → (домен, опц. вкладка Claude).
+M_TARGETS: dict[str, tuple[str, str | None]] = {
+    "claude": ("dom-claude", None),
+    "agents": ("dom-claude", "tab-agents"),
+    "skills": ("dom-claude", "tab-skills"),
+    "plugins": ("dom-claude", "tab-plugins"),
+    "mcp": ("dom-claude", "tab-mcp"),
+    "files": ("dom-files", None),
+    "commands": ("dom-commands", None),
+    "scripts": ("dom-commands", None),
+}
+
 
 class ManagerApp(App):
     """Корневое приложение: домены Claude (Агенты/Скилы/Плагины/MCP), Files (dotfiles),
@@ -787,15 +799,21 @@ class ManagerApp(App):
         Binding("f2", "toggle_domain", "Domain ⇄", show=True),
     ]
 
+    def __init__(self, initial_domain: str = "dom-claude",
+                 initial_tab: str | None = None) -> None:
+        super().__init__()
+        self._initial_domain = initial_domain
+        self._initial_tab = initial_tab
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Container():
             # Домены переключаются F2 (norton-стиль), а не вкладкой — чтобы не было
             # табов-над-табами. Виден только один ряд вкладок (Claude); Files/Команды —
             # отдельные вьюхи без вкладок. ContentSwitcher показывает домен по id.
-            yield Static(self._domain_bar_text("dom-claude"), id="domain-bar")
-            with ContentSwitcher(initial="dom-claude", id="domains"):
-                with TabbedContent(id="dom-claude"):
+            yield Static(self._domain_bar_text(self._initial_domain), id="domain-bar")
+            with ContentSwitcher(initial=self._initial_domain, id="domains"):
+                with TabbedContent(id="dom-claude", initial=self._initial_tab or "tab-agents"):
                     yield AgentsPane("Agents", id="tab-agents")
                     yield SkillsPane("Skills", id="tab-skills")
                     yield PluginsPane("Plugins", id="tab-plugins")
@@ -803,6 +821,19 @@ class ManagerApp(App):
                 yield FilesPane(id="dom-files")
                 yield CommandsPane(id="dom-commands")
         yield Footer()
+
+    def on_mount(self) -> None:
+        # Открылись сразу на домене-вьюхе (Files/Команды) — сфокусировать её таблицу.
+        tbl = {"dom-files": "#files-table",
+               "dom-commands": "#commands-table"}.get(self._initial_domain)
+        if tbl:
+            self.call_after_refresh(lambda: self._focus_table(tbl))
+
+    def _focus_table(self, selector: str) -> None:
+        try:
+            self.query_one(selector, DataTable).focus()
+        except Exception:
+            pass
 
     @staticmethod
     def _domain_bar_text(current: str) -> str:
@@ -841,7 +872,14 @@ def _clear_if_no_altscreen() -> None:
         sys.stdout.flush()
 
 
-def run_manage() -> int:
-    ManagerApp().run()
+def run_manage(target: str | None = None) -> int:
+    """Запустить TUI. target — дружественное имя раздела (см. M_TARGETS): открыть
+    сразу на нём. None — обычный старт (домен Claude)."""
+    if target and target not in M_TARGETS:
+        print(f"Неизвестный раздел: {target!r}. Доступны: {', '.join(M_TARGETS)}",
+              file=sys.stderr)
+        return 1
+    domain, tab = M_TARGETS.get(target or "", ("dom-claude", None))
+    ManagerApp(domain, tab).run()
     _clear_if_no_altscreen()
     return 0

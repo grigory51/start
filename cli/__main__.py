@@ -46,7 +46,7 @@ def _cmd_seed(args: argparse.Namespace) -> int:
 
 def _cmd_manage(args: argparse.Namespace) -> int:
     from .manage import run_manage  # ленивый импорт: textual тянем только для manage
-    return run_manage()
+    return run_manage(target=args.domain)
 
 
 def _cmd_add_submodule(args: argparse.Namespace) -> int:
@@ -94,7 +94,12 @@ def main() -> int:
     sd.add_argument("--dry-run", action="store_true", help="показать план без изменений")
     sd.set_defaults(func=_cmd_seed)
 
-    manage = sub.add_parser("manage", help="TUI: агенты и скилы")
+    manage = sub.add_parser(
+        "manage", aliases=["m"],
+        help="TUI: домены Claude/Files/Команды (алиас m; быстрый переход — m-scripts, m-plugins, …)")
+    manage.add_argument("--domain", default=None,
+                        help="открыть сразу на разделе: scripts/commands, files, "
+                             "claude, agents, skills, plugins, mcp")
     manage.set_defaults(func=_cmd_manage)
 
     addsub = sub.add_parser(
@@ -109,7 +114,12 @@ def main() -> int:
                         help="не раскладывать symlink'и после добавления")
     addsub.set_defaults(func=_cmd_add_submodule)
 
-    args = ap.parse_args()
+    # Быстрый переход: `start m-<раздел>` → `manage --domain <раздел>` (m-scripts, m-plugins…).
+    argv = sys.argv[1:]
+    if argv and argv[0].startswith("m-"):
+        argv = ["manage", "--domain", argv[0][2:], *argv[1:]]
+
+    args = ap.parse_args(argv)
     if not getattr(args, "func", None):
         ap.print_help()
         return 1
