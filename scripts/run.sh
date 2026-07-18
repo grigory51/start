@@ -5,7 +5,15 @@
 # Нужен, чтобы `make …` работал и на машинах без uv (напр. Debian-нетбук).
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Резолвим путь скрипта сквозь симлинки (напр. ~/.local/bin/start -> scripts/run.sh),
+# чтобы REPO указывал на репозиторий, а не на каталог симлинка.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [ "${SOURCE#/}" = "$SOURCE" ] && SOURCE="$DIR/$SOURCE"
+done
+REPO="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 cd "$REPO"
 
 # 1) uv — если есть, он сам всё поднимет.

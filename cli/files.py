@@ -15,6 +15,20 @@ from .config import REPO_DIR
 from .install import Ctx, link
 
 
+def install_launcher(ctx: Ctx) -> None:
+    """Симлинк ~/.local/bin/start -> scripts/run.sh, чтобы звать `start` из любого места.
+
+    run.sh резолвит REPO от своего реального пути (сквозь симлинк), поэтому лаунчер
+    работает независимо от cwd. ~/.local/bin обычно уже в PATH; каталог создаём при
+    отсутствии.
+    """
+    src = (REPO_DIR / "scripts" / "run.sh").resolve()
+    dst = Path.home() / ".local" / "bin" / "start"
+    if not ctx.dry_run:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+    link(ctx, src, dst)
+
+
 def install_files(ctx: Ctx) -> None:
     """Dotfiles ([[files.dotfiles]]) -> symlink'и в $HOME + опциональный posthook.
 
@@ -27,6 +41,7 @@ def install_files(ctx: Ctx) -> None:
     custom-папку в репо через `defaults write`). Если target нет — symlink не ставим,
     только posthook.
     """
+    install_launcher(ctx)
     entries, warnings = config.load_dotfiles()
     for w in warnings:
         ctx.say(f"  ! {w}")
