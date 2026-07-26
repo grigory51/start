@@ -23,6 +23,7 @@ import curses
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 from contextlib import redirect_stdout
@@ -39,6 +40,7 @@ from textual.widgets import (
 )
 
 from . import config
+from .sections import M_TARGETS
 from .up import run_up
 
 
@@ -663,7 +665,8 @@ class CommandsPane(Container):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._row_map: list[config.Task] = []
+        # None — строка-разделитель между доступными и недоступными командами.
+        self._row_map: list[config.Task | None] = []
 
     def compose(self) -> ComposeResult:
         yield DataTable(id="commands-table", cursor_type="row", zebra_stripes=True)
@@ -682,13 +685,25 @@ class CommandsPane(Container):
         table.clear()
         self._row_map = []
         tasks, warnings = config.load_tasks()
-        for t in tasks:
+
+        def add_task(t: config.Task) -> None:
             cmd = t.command
             lamp = "💡" if cmd else "[dim]○[/]"
             title = t.title + (" [yellow]🔒[/]" if t.sudo else "")
             run_cell = _truncate(cmd, 70) if cmd else "[dim]— no variant for this OS[/]"
             table.add_row(lamp, title, run_cell)
             self._row_map.append(t)
+
+        # Доступные на этой ОС — сверху; недоступные — под разделитель, чтобы не мешались.
+        available = [t for t in tasks if t.command]
+        unavailable = [t for t in tasks if not t.command]
+        for t in available:
+            add_task(t)
+        if available and unavailable:
+            table.add_row("", "[dim]─── недоступные на этой ОС ───[/]", "")
+            self._row_map.append(None)
+        for t in unavailable:
+            add_task(t)
         if self._row_map:
             table.move_cursor(row=min(prev, len(self._row_map) - 1))
         st = self.query_one("#commands-status", Static)
@@ -732,15 +747,30 @@ class CommandsPane(Container):
             # историю, H — курсор в начало.
             print("\x1b[2J\x1b[3J\x1b[H", end="", flush=True)
             print(f"$ {cmd}\n")
-            rc = subprocess.run(cmd, shell=True, cwd=config.REPO_DIR, env=env).returncode
-            # Пауза перед возвратом: иначе TUI перерисуется поверх вывода и ошибку/итог
-            # не успеть прочитать. Ждём Enter (Ctrl-D/Ctrl-C тоже возвращают).
+            # Ctrl+C должен прерывать только команду, а не сам TUI. Иначе SIGINT летит
+            # всей foreground-группе, и родитель (Textual) завершается при возврате из
+            # suspend. Родитель игнорирует SIGINT (ядро его отбрасывает — до Textual он
+            # не доходит), а дочерний процесс сбрасывает обработчик в SIG_DFL (preexec),
+            # чтобы Ctrl+C его штатно прерывал.
+            prev_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
-                input(f"\n[exit {rc} — press Enter to return to manager]")
-            except (EOFError, KeyboardInterrupt):
-                pass
+                rc = subprocess.run(
+                    cmd, shell=True, cwd=config.REPO_DIR, env=env,
+                    preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+                ).returncode
+                # Пауза перед возвратом: иначе TUI перерисуется поверх вывода и ошибку/итог
+                # не успеть прочитать. Ждём Enter (Ctrl-D тоже возвращает).
+                label = f"stopped by signal {-rc}" if rc < 0 else f"exit {rc}"
+                try:
+                    input(f"\n[{label} — press Enter to return to manager]")
+                except (EOFError, KeyboardInterrupt):
+                    pass
+            finally:
+                signal.signal(signal.SIGINT, prev_sigint)
         if rc == 0:
             self._status(f"{t.title}: done ✓")
+        elif rc < 0:
+            self._status(f"{t.title}: остановлена (сигнал {-rc})", warn=True)
         else:
             self._status(f"{t.title}: exited with code {rc}", warn=True)
 
@@ -751,18 +781,6 @@ _DOMAINS = [
     ("dom-files", "Files"),
     ("dom-commands", "Commands"),
 ]
-
-# Быстрый переход (`start m-<name>`): дружественное имя → (домен, опц. вкладка Claude).
-M_TARGETS: dict[str, tuple[str, str | None]] = {
-    "claude": ("dom-claude", None),
-    "agents": ("dom-claude", "tab-agents"),
-    "skills": ("dom-claude", "tab-skills"),
-    "plugins": ("dom-claude", "tab-plugins"),
-    "mcp": ("dom-claude", "tab-mcp"),
-    "files": ("dom-files", None),
-    "commands": ("dom-commands", None),
-    "scripts": ("dom-commands", None),
-}
 
 
 class ManagerApp(App):

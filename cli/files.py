@@ -16,17 +16,27 @@ from .install import Ctx, link
 
 
 def install_launcher(ctx: Ctx) -> None:
-    """Симлинк ~/.local/bin/start -> scripts/run.sh, чтобы звать `start` из любого места.
+    """Симлинки в $HOME для удобного вызова `start`:
 
-    run.sh резолвит REPO от своего реального пути (сквозь симлинк), поэтому лаунчер
-    работает независимо от cwd. ~/.local/bin обычно уже в PATH; каталог создаём при
-    отсутствии.
+    • ~/.local/bin/start -> scripts/run.sh — вызов из любого места (run.sh резолвит REPO
+      от своего реального пути сквозь симлинк, поэтому работает независимо от cwd;
+      ~/.local/bin обычно уже в PATH);
+    • ~/.local/share/bash-completion/completions/start -> scripts/start-completion.bash —
+      bash-автодополнение подкоманд и разделов (`start m <TAB>`). bash-completion@2
+      подхватывает его по имени команды; без него — source файла в ~/.bashrc.
+
+    Каталоги создаём при отсутствии.
     """
-    src = (REPO_DIR / "scripts" / "run.sh").resolve()
-    dst = Path.home() / ".local" / "bin" / "start"
-    if not ctx.dry_run:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-    link(ctx, src, dst)
+    home = Path.home()
+    links = [
+        (REPO_DIR / "scripts" / "run.sh", home / ".local" / "bin" / "start"),
+        (REPO_DIR / "scripts" / "start-completion.bash",
+         home / ".local" / "share" / "bash-completion" / "completions" / "start"),
+    ]
+    for src, dst in links:
+        if not ctx.dry_run:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+        link(ctx, src.resolve(), dst)
 
 
 def install_files(ctx: Ctx) -> None:

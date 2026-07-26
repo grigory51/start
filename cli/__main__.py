@@ -46,7 +46,7 @@ def _cmd_seed(args: argparse.Namespace) -> int:
 
 def _cmd_manage(args: argparse.Namespace) -> int:
     from .manage import run_manage  # ленивый импорт: textual тянем только для manage
-    return run_manage(target=args.domain)
+    return run_manage(target=args.section)
 
 
 def _cmd_add_submodule(args: argparse.Namespace) -> int:
@@ -63,7 +63,12 @@ def _cmd_add_submodule(args: argparse.Namespace) -> int:
     return 0 if res.ok else 1
 
 
-def main() -> int:
+def _cmd_completion(args: argparse.Namespace) -> int:
+    from .completion import write
+    return write(check=args.check)
+
+
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="start",
         description="Переносимый сетап машины: домены Claude (~/.claude) + Files ($HOME) симлинками из репо, и TUI.",
@@ -96,8 +101,8 @@ def main() -> int:
 
     manage = sub.add_parser(
         "manage", aliases=["m"],
-        help="TUI: домены Claude/Files/Команды (алиас m; быстрый переход — m-scripts, m-plugins, …)")
-    manage.add_argument("--domain", default=None,
+        help="TUI: домены Claude/Files/Команды (алиас m; быстрый переход — `m scripts`, `m plugins`, …)")
+    manage.add_argument("section", nargs="?", default=None,
                         help="открыть сразу на разделе: scripts/commands, files, "
                              "claude, agents, skills, plugins, mcp")
     manage.set_defaults(func=_cmd_manage)
@@ -114,12 +119,19 @@ def main() -> int:
                         help="не раскладывать symlink'и после добавления")
     addsub.set_defaults(func=_cmd_add_submodule)
 
-    # Быстрый переход: `start m-<раздел>` → `manage --domain <раздел>` (m-scripts, m-plugins…).
-    argv = sys.argv[1:]
-    if argv and argv[0].startswith("m-"):
-        argv = ["manage", "--domain", argv[0][2:], *argv[1:]]
+    comp = sub.add_parser(
+        "completion",
+        help="сгенерировать scripts/start-completion.bash из CLI (единый источник)")
+    comp.add_argument("--check", action="store_true",
+                      help="не писать, только проверить актуальность (rc=1 если устарел)")
+    comp.set_defaults(func=_cmd_completion)
 
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main() -> int:
+    ap = build_parser()
+    args = ap.parse_args()
     if not getattr(args, "func", None):
         ap.print_help()
         return 1
