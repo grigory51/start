@@ -11,8 +11,8 @@ CLAUDE.md, rules, statusline.
   commands — per-file symlink в ~/.claude/commands/ (зеркало agents).
   hooks    — per-file symlink в ~/.claude/hooks/ (папку не трогаем: там лежат
              сторонние хуки не из репо).
-  CLAUDE.md— один symlink на repo/ai/claude/CLAUDE.global.md.
-  rules    — per-entry зеркало repo/ai/claude/rules/ в ~/.claude/rules/ (CC грузит
+  CLAUDE.md— один symlink на repo/ai/instructions/global.md.
+  rules    — per-entry зеркало repo/ai/rules/ в ~/.claude/rules/ (CC грузит
              все *.md оттуда автоматически при старте — always-on).
   statusline — symlink скрипта; settings.json пишет settings-слой.
 
@@ -22,10 +22,10 @@ CLAUDE.md, rules, statusline.
 
 from __future__ import annotations
 
-from . import config
-from . import plugins
-from .config import REPO_DIR
-from .install import (
+from .. import adapters, config
+from .. import plugins
+from ..config import REPO_DIR
+from ..install import (
     CLAUDE_DIR,
     Ctx,
     _is_ours,
@@ -80,6 +80,7 @@ def install_agents(ctx: Ctx) -> None:
         ctx.say(f"  ! {w}")
         ctx.errors += 1
 
+    agents = [a for a in agents if adapters.supports(a, "claude")]
     wanted = {a.name + ".md" for a in agents}
 
     # Убрать наши устаревшие symlink'и (агент выпал из конфига/репо).
@@ -92,7 +93,9 @@ def install_agents(ctx: Ctx) -> None:
 
     changed = 0
     for a in agents:
-        st = link(ctx, a.path, dst_root / (a.name + ".md"), assume_absent=migrated, quiet=True)
+        source = adapters.claude_agent(a)
+        st = link(ctx, source, dst_root / (a.name + ".md"),
+                  assume_absent=migrated, quiet=True)
         changed += st == "linked"
     delta = f", изменено {changed}" if changed else " — без изменений"
     ag = _plural(len(agents), "агент", "агента", "агентов")
@@ -119,6 +122,7 @@ def install_commands(ctx: Ctx) -> None:
         ctx.say(f"  ! {w}")
         ctx.errors += 1
 
+    commands = [c for c in commands if adapters.supports(c, "claude")]
     wanted = {c.name + ".md" for c in commands}
 
     if not migrated and dst_root.is_dir() and not dst_root.is_symlink():
@@ -212,7 +216,7 @@ def install_skills(ctx: Ctx) -> None:
         ctx.say(f"  ! {w}")
         ctx.errors += 1
 
-    skills = cfg.enabled_skills
+    skills = [s for s in cfg.enabled_skills if adapters.supports(s, "claude")]
     wanted = {s.name for s in skills}
 
     # (a) Чистка верхнего уровня: скил выпал из конфига/репо/выключен.
@@ -259,20 +263,23 @@ def install_hooks(ctx: Ctx) -> None:
     ctx.say(f"Hooks -> {dst}/")
     if not ctx.dry_run:
         dst.mkdir(parents=True, exist_ok=True)
-    hooks_src = REPO_DIR / "ai" / "claude" / "hooks"
-    if hooks_src.is_dir():
-        for f in sorted(hooks_src.glob("*.sh")):
-            link(ctx, f, dst / f.name)
+    entries, warnings = config.load_hooks("claude")
+    for warning in warnings:
+        ctx.say(f"  ! {warning}")
+        ctx.errors += 1
+    for entry in entries:
+        source = (REPO_DIR / entry["path"]).resolve()
+        link(ctx, source, dst / source.name)
     ctx.say()
 
 
 def install_claude_md(ctx: Ctx) -> None:
-    """Глобальный CLAUDE.md -> symlink на repo/ai/claude/CLAUDE.global.md.
+    """Глобальный CLAUDE.md -> symlink на repo/ai/instructions/global.md.
 
-    Грузится во всех сессиях. Управляется из репо (правь ai/claude/CLAUDE.global.md,
+    Грузится во всех сессиях. Управляется из репо (правь ai/instructions/global.md,
     не ~/.claude/CLAUDE.md). Чужой существующий файл бэкапится при --force.
     """
-    src = REPO_DIR / "ai" / "claude" / "CLAUDE.global.md"
+    src = REPO_DIR / "ai" / "instructions" / "global.md"
     if not src.is_file():
         return
     ctx.say(f"CLAUDE.md -> {CLAUDE_DIR / 'CLAUDE.md'}")
@@ -285,14 +292,14 @@ def install_claude_md(ctx: Ctx) -> None:
 def install_rules(ctx: Ctx) -> None:
     """Правила -> ~/.claude/rules/ (per-entry symlink).
 
-    Каталог ai/claude/rules/ разбивает глобальные инструкции на тематические файлы.
+    Каталог ai/rules/ разбивает глобальные инструкции на тематические файлы.
     Claude Code (v2.0.64+) автоматически грузит все *.md из ~/.claude/rules/ при
     старте — как CLAUDE.md, но по темам. Источник фиксирован (репо), как у
     CLAUDE.md/hooks. Зеркало per-entry (файл или подпапка dir-symlink), чтобы не
     перетирать чужие правила в ~/.claude/rules/ и поддержать вложенные каталоги.
     Скрытые записи (напр. .gitkeep) пропускаем — CC их не грузит.
     """
-    src_root = REPO_DIR / "ai" / "claude" / "rules"
+    src_root = REPO_DIR / "ai" / "rules"
     if not src_root.is_dir():
         return
     entries = sorted(p for p in src_root.iterdir() if not p.name.startswith("."))

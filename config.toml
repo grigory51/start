@@ -1,31 +1,30 @@
-# config.toml — start: переносимый сетап машины. Два домена, разведённые в самой
+# config.toml — start: переносимый сетап машины. Домены разведены в самой
 # структуре TOML (не только баннерами):
-#   • [claude]  (~/.claude) — скилы, агенты, плагины, MCP, env, statusline, hooks;
+#   • [ai]      — единый каталог для Claude Code и Codex;
 #   • [files]   ($HOME)     — dotfiles ([[files.dotfiles]]).
-# Секции домена Claude вложены в таблицу [claude] ([[claude.skills]], [[claude.agents]],
-# [[claude.plugins]], [[claude.mcp]], [[claude.hooks]], [claude.env], [claude.statusline]);
+# Секции AI вложены в [ai] ([[ai.skills]], [[ai.agents]], [[ai.plugins]],
+# [[ai.mcp]], [[ai.hooks]], [ai.statusline], [ai.platforms]);
 # домен Files — в [files] ([[files.dotfiles]]).
 #
 # CLAUDE.md и rules НЕ настраиваются здесь — источник фиксирован в репо
-# (ai/claude/CLAUDE.global.md и ai/claude/rules/*.md), линкуются автоматически.
+# (ai/instructions/global.md и ai/rules/*.md), адаптируются автоматически.
 #
 # Локальный overlay
 # -----------------
 # config.local.toml (gitignore) переопределяет `enabled` источников для ТЕКУЩЕЙ машины.
 # Формат остаётся ПЛОСКИМ: [local.<section>] "<key>" = <enabled>, где section ∈ skills/
 # agents/commands/plugins/mcp; key — path источника (или name для mcp). Плоским намеренно:
-# overlay машино-локальный и целиком про домен Claude, вложение сломало бы уже
-# настроенные машины. Эффективный enabled = overlay, если ключ есть, иначе значение
-# отсюда. В TUI: `t` тоглит локально, `g` — глобально (тут).
+# overlay машино-локальный. Формат: [local.ai.<section>].
+# Эффективный enabled = overlay, если ключ есть, иначе значение отсюда.
 
 
-# ══════════════════════════════ CLAUDE ══════════════════════════════
-# Домен ~/.claude: то, что менеджер раскладывает symlink'ами в конфиг Claude Code.
+# ═══════════════════════════════ AI ════════════════════════════════
+# Один каталог; backend-ы раскладывают его в Claude Code и Codex.
 
 # --- Скилы --------------------------------------------------------------------
 #
-# Каждый источник скилов — отдельный [[claude.skills]], включая локальную папку
-# repo/ai/claude/skills. Порядок записей задаёт приоритет при конфликте имён (берётся
+# Каждый источник скилов — отдельный [[ai.skills]], включая локальную папку
+# repo/ai/skills. Порядок записей задаёт приоритет при конфликте имён (берётся
 # первое вхождение).
 #
 #   path     — путь к папке-источнику относительно корня репо. Внутри неё каждый
@@ -34,13 +33,13 @@
 #              (["a","c"]) либо [] (ни одного = источник выключен). TUI
 #              (`uv run start manage`) правит это поле прямо в этом файле.
 #   exclude  — какие скилы вообще не показывать (имена папок). Поверх enabled.
-#   symlinks — список [[claude.skills.symlinks]] = {source, destination}: доп. symlink,
+#   symlinks — список [[ai.skills.symlinks]] = {source, destination}: доп. symlink,
 #              добавляемый в КАЖДОЕ зеркало скила этого источника. source — путь
 #              относительно корня репо; destination — имя/путь внутри папки-зеркала
 #              скила. Нужно, когда скил зовёт файл вне своей папки (напр. plugin-root
 #              scripts/). Коллизия destination с родной записью скила — ошибка установки.
-#   requirements — список [[claude.skills.requirements]] = {name, check, hint}: внешние
-#              зависимости скилов источника (та же схема, что у [[claude.plugins.requirements]]).
+#   requirements — список [[ai.skills.requirements]] = {name, check, hint}: внешние
+#              зависимости скилов источника (та же схема, что у [[ai.plugins.requirements]]).
 #              check — shell-команда проверки (rc 0 = есть), hint — как поставить.
 #              Менеджер при up проверяет и при отсутствии печатает hint (сам НЕ ставит).
 #              Применяются ко всем скилам источника; проверяются раз на источник, если
@@ -51,11 +50,11 @@
 # (cli сообщит и пропустит дубль).
 
 # Локальные скилы репо.
-[[claude.skills]]
-path = "ai/claude/skills"
+[[ai.skills]]
+path = "ai/skills"
 enabled = ["*"]
 
-[[claude.skills]]
+[[ai.skills]]
 path = "contrib/blender-skills"
 enabled = ["image-to-3d", "multi-image-to-3d", "threejs-export"]
 # exclude = ["threejs-export"]
@@ -63,27 +62,27 @@ enabled = ["image-to-3d", "multi-image-to-3d", "threejs-export"]
 # lottie — text-to-Lottie: генерация/правка Lottie/Bodymovin JSON под локальный
 # Skia Skottie player. Сабмодуль — full app (React/Vite); скилы лежат в skills/,
 # берём только text-to-lottie. Скил self-contained (references/ внутри папки).
-[[claude.skills]]
+[[ai.skills]]
 path = "contrib/lottie/skills"
 enabled = ["text-to-lottie"]
   # Скил рендерит/верифицирует сцены в официальном Skia Skottie player — это app
   # из того же сабмодуля (contrib/lottie), запускается через bun. Без bun плеер не
   # поднять, верификация сцен невозможна. Менеджер проверяет bun и подсказывает.
-  [[claude.skills.requirements]]
+  [[ai.skills.requirements]]
   name = "bun"
   check = "command -v bun"
   hint = "curl -fsSL https://bun.sh/install | bash  (или brew install oven-sh/bun/bun). Затем плеер: cd contrib/lottie && bun install && bun dev"
 
 # --- Агенты -------------------------------------------------------------------
 #
-# Каждый источник агентов — отдельный [[claude.agents]] (репо + сабмодули). path → папка
+# Каждый источник агентов — отдельный [[ai.agents]] (репо + сабмодули). path → папка
 # с *.md-агентами; имя файла без .md = имя агента в ~/.claude/agents. Поля
-# path/enabled/exclude — как у [[claude.skills]] (enabled — имена без .md). Конфликт имён —
+# path/enabled/exclude — как у [[ai.skills]] (enabled — имена без .md). Конфликт имён —
 # первое вхождение (как у скилов). У агентов нет TUI-toggle, но enabled-список тоже
-# действует: линкуются только включённые им. (Агенты плагинов идут через [[claude.plugins]].)
+# действует: линкуются только включённые им. (Агенты плагинов идут через [[ai.plugins]].)
 
-[[claude.agents]]
-path = "ai/claude/agents"
+[[ai.agents]]
+path = "ai/agents"
 enabled = ["*"]
 
 # --- Плагины (нативные CC) ----------------------------------------------------
@@ -96,38 +95,38 @@ enabled = ["*"]
 #   path     — корень плагина (каталог с .claude-plugin/).
 #   enabled  — bool: включить плагин целиком (плагин атомарен).
 #   marketplace / plugin — override имён, если автодетект из манифеста не сработал.
-#   [[claude.plugins.requirements]] — внешние зависимости плагина (бинари): name/check/hint.
+#   [[ai.plugins.requirements]] — внешние зависимости плагина (бинари): name/check/hint.
 #              `check` — shell-команда проверки (rc 0 = есть), `hint` — как поставить.
 #              Менеджер при up проверяет и при отсутствии печатает hint (сам НЕ ставит).
 
-[[claude.plugins]]
+[[ai.plugins]]
 path = "contrib/claude-seo"
 enabled = true
 
-[[claude.plugins]]
+[[ai.plugins]]
 path = "contrib/infostyle-skill"
 enabled = true
 
-[[claude.plugins]]
+[[ai.plugins]]
 path = "contrib/text-to-cad"
 enabled = true
 
-[[claude.plugins]]
+[[ai.plugins]]
 path = "contrib/ponytail"
 enabled = true
 
-[[claude.plugins]]
+[[ai.plugins]]
 path = "contrib/ui-ux-pro-max-skill"
 enabled = true
 
 # ast-index — структурный поиск по коду (символы/вызовы/иерархии) вместо grep.
 # Плагин даёт скил/правила/команды; сам бинарь ast-index ставится отдельно (см.
-# [[claude.plugins.requirements]]). Команды: search/usages/implementations/callers/outline/...
-[[claude.plugins]]
+# [[ai.plugins.requirements]]). Команды: search/usages/implementations/callers/outline/...
+[[ai.plugins]]
 path = "contrib/ast-index"
 enabled = true
   # Бинарь ast-index не входит в плагин — менеджер проверяет наличие и подсказывает.
-  [[claude.plugins.requirements]]
+  [[ai.plugins.requirements]]
   name = "ast-index"
   check = "command -v ast-index"
   hint = "brew tap defendend/ast-index && brew trust defendend/ast-index && brew install ast-index"
@@ -139,24 +138,24 @@ enabled = true
 # worker-service на локальном порту (по умолчанию 37701; SQLite + векторный индекс),
 # рантайм — через bun. Требует node>=20 и bun — менеджер проверяет и подсказывает,
 # сам не ставит. Рантайм-deps плагина ставятся отдельно: bun install в plugin/.
-[[claude.plugins]]
+[[ai.plugins]]
 path = "contrib/claude-mem"
 enabled = true
-  [[claude.plugins.requirements]]
+  [[ai.plugins.requirements]]
   name = "node>=20"
   check = "command -v node && node -e 'process.exit(+process.versions.node.split(\".\")[0]>=20?0:1)'"
   hint = "1. Install nvm (https://github.com/nvm-sh/nvm)  2. nvm install --lts"
-  [[claude.plugins.requirements]]
+  [[ai.plugins.requirements]]
   name = "bun"
   check = "command -v bun"
   hint = "curl -fsSL https://bun.sh/install | bash  (или brew install oven-sh/bun/bun)"
 
 # --- Slash-команды ------------------------------------------------------------
 #
-# Рассыпанные *.md команды (как [[claude.agents]]): имя файла без .md = имя команды,
-# symlink в ~/.claude/commands/. Команды плагинов идут через [[claude.plugins]].
+# Рассыпанные *.md команды (как [[ai.agents]]): имя файла без .md = имя команды,
+# backend раскладывает их в платформенный формат. Команды плагинов идут через [[ai.plugins]].
 #
-# [[claude.commands]]
+# [[ai.commands]]
 # path = "commands"
 # enabled = ["*"]
 
@@ -164,16 +163,16 @@ enabled = true
 #
 # Глобальные (user-scope) MCP: менеджер пишет включённые в ~/.claude.json (top-level
 # mcpServers) — CC читает MCP только оттуда, НЕ из settings.json. inline-спека
-# [claude.mcp.server] (command/args/env | url/headers); env ${VAR} как литерал (CC разворачивает).
+# [ai.mcp.server] (command/args/env | url/headers); env ${VAR} как литерал.
 #   name     — имя сервера в ~/.claude.json.
 #   enabled  — bool. Машино-специфично включать через config.local.toml ([local.mcp]).
 #
 # monium_mcp — нужен только на рабочей машине (Аркадия). В git выключен; на нужной
 # машине включается: config.local.toml → [local.mcp] monium_mcp = true (или `t` в TUI).
-[[claude.mcp]]
+[[ai.mcp]]
 name = "monium_mcp"
 enabled = false
-[claude.mcp.server]
+[ai.mcp.server]
 command = "ya"
 args = ["tool", "mcp", "connect", "mcp.yandex.net/ws?servers=monium_mcp"]
 
@@ -182,7 +181,7 @@ args = ["tool", "mcp", "connect", "mcp.yandex.net/ws?servers=monium_mcp"]
 # Произвольные env для CC, менеджер мержит их в settings.json `env` (managed, sidecar).
 # ENABLE_CLAUDEAI_MCP_SERVERS=false — отключить claude.ai connectors (напр. Google Drive),
 # которые синхронятся из аккаунта claude.ai, а не из этого репо.
-[claude.env]
+[ai.platforms.claude.env]
 ENABLE_CLAUDEAI_MCP_SERVERS = "false"
 
 # --- Statusline --------------------------------------------------------------
@@ -191,13 +190,13 @@ ENABLE_CLAUDEAI_MCP_SERVERS = "false"
 # `statusLine` прописывается менеджером (managed, через sidecar). Убери секцию —
 # менеджер снимет statusLine (по sidecar), не трогая чужой.
 
-[claude.statusline]
-path = "ai/claude/statusline/statusline.mjs"   # *.mjs/*.sh относительно корня репо
+[ai.statusline.claude]
+path = "ai/statusline/statusline.mjs"   # *.mjs/*.sh относительно корня репо
 dest = "statusline.mjs"              # имя в ~/.claude/
 command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
   # Команда statusline требует node (файл — .mjs). Без node CC молча не запускает
   # статусбар (плашка не появляется) — менеджер проверяет наличие и подсказывает.
-  [[claude.statusline.requirements]]
+  [[ai.statusline.claude.requirements]]
   name = "node"
   check = "command -v node"
   hint = "1. Install nvm (https://github.com/nvm-sh/nvm)  2. nvm install --lts"
@@ -207,13 +206,18 @@ command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
 # Зарегистрировать loose-hook (hooks/*.sh) на события CC в ~/.claude/settings.json.
 # Файл симлинкается в ~/.claude/hooks/, команда `bash "<...>"` прописывается на events.
 
-[[claude.hooks]]
-path = "ai/claude/hooks/notify.sh"
+[[ai.hooks]]
+path = "ai/hooks/notify.sh"
 events = ["Stop", "Notification"]
 
-[[claude.hooks]]
-path = "ai/claude/hooks/focus-track.sh"
+[[ai.hooks]]
+path = "ai/hooks/focus-track.sh"
 events = ["UserPromptSubmit"]
+platforms = ["claude"]
+
+[ai.statusline.codex]
+items = ["model-with-reasoning", "current-dir", "git-branch", "context-remaining", "five-hour-limit", "weekly-limit", "fast-mode"]
+use_colors = true
 
 
 # ══════════════════════════════ FILES ══════════════════════════════
@@ -302,6 +306,6 @@ sudo = true
 darwin = 'bash "$REPO/scripts/tcp-listen.sh"'
 linux = 'bash "$REPO/scripts/tcp-listen.sh"'
 
-[[claude.plugins]]
+[[ai.plugins]]
 path = "contrib/Understand-Anything"
 enabled = true

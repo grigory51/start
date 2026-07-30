@@ -2,13 +2,13 @@
 
 Три домена (как в config.toml) переключаются клавишей F2 (norton-стиль), а не
 вкладкой — чтобы не было табов-над-табами:
-  Claude  — вкладки:
-    Агенты  — агенты из [[claude.agents]], сгруппированы по источнику. Enter — тело `.md`.
+  AI  — вкладки:
+    Агенты  — агенты из [[ai.agents]], сгруппированы по источнику. Enter — source.
     Скилы   — статус/имя/источник/описание. Enter — `SKILL.md`. Space/`t` вкл/выкл скил
               (или весь источник на заголовке), `g` — глобально; правится `enabled` в
               config.toml/config.local.toml, затем install (без сабмодулей).
-    Плагины — [[claude.plugins]]: toggle (локально/глобально), пересборка seed.
-    MCP     — [[claude.mcp]]: toggle → ~/.claude.json.
+    Плагины — [[ai.plugins]]: общий toggle и синхронизация обоих backend-ов.
+    MCP     — [[ai.mcp]]: toggle → Claude/Codex managed settings.
   Files   — dotfiles ([[files.dotfiles]]): просмотр записей (source/target/posthook).
             Тогглов нет — dotfiles не выключаются; Enter показывает детали записи.
   Команды — разовые действия ([[commands.tasks]]): r/Enter запускают команду для
@@ -41,12 +41,23 @@ from textual.widgets import (
 
 from . import config
 from .sections import M_TARGETS
+from .submodule import add_submodule
 from .up import run_up
 
 
 def _truncate(s: str, n: int) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _platform_label(platforms: tuple[str, ...]) -> str:
+    if platforms == ("claude", "codex") or set(platforms) == {"claude", "codex"}:
+        return "[green]C+C[/]"
+    if platforms == ("claude",):
+        return "[yellow]Claude[/]"
+    if platforms == ("codex",):
+        return "[yellow]Codex[/]"
+    return "[red]none[/]"
 
 
 def _as_json_block(raw: str) -> str:
@@ -196,16 +207,18 @@ class AgentsPane(TabPane):
     def on_mount(self) -> None:
         table = self.query_one("#agents-table", DataTable)
         table.add_column("Agent", width=20)
+        table.add_column("Platforms", width=9)
         table.add_column("Description")
         self._row_map = []
         last_source: str | None = None
         for a in config.load_agents():
             if a.source != last_source:
                 # Заголовок-разделитель группы источника.
-                table.add_row(f"[b]{a.source}[/]", "", height=1)
+                table.add_row(f"[b]{a.source}[/]", "", "", height=1)
                 self._row_map.append(None)
                 last_source = a.source
-            table.add_row(f"  {a.name}", _truncate(a.description, 100))
+            table.add_row(f"  {a.name}", _platform_label(a.platforms),
+                          _truncate(a.description, 100))
             self._row_map.append(a)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -219,7 +232,7 @@ class AgentsPane(TabPane):
 
 
 class PluginsPane(TabPane):
-    """Просмотр + toggle нативных CC-плагинов ([[plugins]]).
+    """Просмотр + toggle общих AI-плагинов ([[ai.plugins]]).
 
     `t`/Space — toggle ЛОКАЛЬНО (config.local.toml, эта машина); `g` — ГЛОБАЛЬНО
     (config.toml, для всех машин). Оба пересобирают seed + мержат settings. Enter
@@ -244,6 +257,7 @@ class PluginsPane(TabPane):
         table = self.query_one("#plugins-table", DataTable)
         table.add_column("💡", width=3)
         table.add_column("Plugin (plugin@marketplace)", width=40)
+        table.add_column("Platforms", width=9)
         table.add_column("Gl", width=5)
         table.add_column("Loc", width=5)
         table.add_column("⚠", width=3)
@@ -260,7 +274,8 @@ class PluginsPane(TabPane):
             lamp, g, loc = _state_cells(p.enabled, p.enabled_base, p.enabled_local)
             ref = p.ref if p.enabled else f"[dim]{p.ref}[/]"
             warn = "[yellow]⚠[/]" if p.session_start_hooks else ""
-            table.add_row(lamp, ref, g, loc, warn, _truncate(p.description, 55))
+            table.add_row(lamp, ref, _platform_label(p.platforms),
+                          g, loc, warn, _truncate(p.description, 55))
             self._row_map.append(p)
         if self._row_map:
             table.move_cursor(row=min(prev, len(self._row_map) - 1))
@@ -281,7 +296,11 @@ class PluginsPane(TabPane):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         p = self._at_cursor()
         if p is not None:
-            self.app.push_screen(ContentScreen(p.ref, p.path / ".claude-plugin" / "plugin.json"))
+            platform = "claude" if "claude" in p.platform_paths else "codex"
+            root = p.platform_paths.get(platform, p.path)
+            self.app.push_screen(
+                ContentScreen(p.ref, root / f".{platform}-plugin" / "plugin.json")
+            )
 
     def action_toggle_local(self) -> None:
         p = self._at_cursor()
@@ -321,9 +340,9 @@ class PluginsPane(TabPane):
 
     def _rebuild_done(self, what: str, errors: int) -> None:
         if errors:
-            self._status(f"{what}, but with warnings ({errors}). Restart claude.", warn=True)
+            self._status(f"{what}, but with warnings ({errors}). Restart clients.", warn=True)
         else:
-            self._status(f"{what} ✓ seed+settings updated. Restart claude.")
+            self._status(f"{what} ✓ Claude+Codex updated. Restart clients.")
         self._reload()
 
 
@@ -352,6 +371,7 @@ class McpPane(TabPane):
         table = self.query_one("#mcp-table", DataTable)
         table.add_column("💡", width=3)
         table.add_column("MCP", width=24)
+        table.add_column("Platforms", width=9)
         table.add_column("Gl", width=5)
         table.add_column("Loc", width=5)
         table.add_column("Command / URL")
@@ -369,7 +389,8 @@ class McpPane(TabPane):
             srv = m.server or {}
             desc = srv.get("command", "") and (srv["command"] + " " + " ".join(srv.get("args", [])))
             desc = desc or srv.get("url", "")
-            table.add_row(lamp, name, g, loc, _truncate(desc, 55))
+            table.add_row(lamp, name, _platform_label(m.platforms), g, loc,
+                          _truncate(desc, 55))
             self._row_map.append(m)
         if self._row_map:
             table.move_cursor(row=min(prev, len(self._row_map) - 1))
@@ -454,6 +475,7 @@ class SkillsPane(TabPane):
         table = self.query_one("#skills-table", DataTable)
         table.add_column("◉", width=3)
         table.add_column("Skill", width=26)
+        table.add_column("Platforms", width=9)
         table.add_column("Description")
         self._reload()
         table.focus()
@@ -485,12 +507,13 @@ class SkillsPane(TabPane):
                 group = by_source[s.source]
                 on = sum(g.enabled for g in group)
                 head = "[green]◉[/]" if on == len(group) else ("○" if on == 0 else "[yellow]◐[/]")
-                table.add_row(head, f"[b]{s.source}[/]", "", height=1)
+                table.add_row(head, f"[b]{s.source}[/]", "", "", height=1)
                 self._row_map.append(s.source)
                 last_source = s.source
             mark = "[green]●[/]" if s.enabled else "[dim]○[/]"
             name = f"  {s.name}" if s.enabled else f"  [dim]{s.name}[/]"
-            table.add_row(mark, name, _truncate(s.description, 80))
+            table.add_row(mark, name, _platform_label(s.platforms),
+                          _truncate(s.description, 80))
             self._row_map.append(s)
 
         if self._row_map:
@@ -574,8 +597,6 @@ class SkillsPane(TabPane):
 
     @work(thread=True, exclusive=True)
     def _add_submodule_worker(self, fields: dict) -> None:
-        from .submodule import add_submodule
-
         res = add_submodule(
             fields["url"], name=fields["name"],
             skills_subdir=fields["skills_subdir"], quiet=True)
@@ -590,6 +611,31 @@ class SkillsPane(TabPane):
             self._reload()
         else:
             self._status(f"✗ {res.message}", warn=True)
+
+
+class StatusPane(TabPane):
+    """Read-only summary of the two native HUD implementations."""
+
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="status-table", cursor_type="row", zebra_stripes=True)
+
+    def on_mount(self) -> None:
+        table = self.query_one("#status-table", DataTable)
+        table.add_column("Platform", width=12)
+        table.add_column("Implementation", width=24)
+        table.add_column("Configuration")
+        claude_status = config.load_statusline("claude")
+        codex_status = config.load_statusline("codex")
+        table.add_row(
+            "Claude",
+            "command renderer",
+            (claude_status or {}).get("command", "[dim]disabled[/]"),
+        )
+        table.add_row(
+            "Codex",
+            "native TUI footer",
+            ", ".join((codex_status or {}).get("items", [])) or "[dim]disabled[/]",
+        )
 
 
 class FilesPane(Container):
@@ -777,7 +823,7 @@ class CommandsPane(Container):
 
 # Домены верхнего уровня: (id контента, подпись). Порядок = порядок цикла по F2.
 _DOMAINS = [
-    ("dom-claude", "Claude"),
+    ("dom-ai", "AI"),
     ("dom-files", "Files"),
     ("dom-commands", "Commands"),
 ]
@@ -787,7 +833,7 @@ class ManagerApp(App):
     """Корневое приложение: домены Claude (Агенты/Скилы/Плагины/MCP), Files (dotfiles),
     Команды (разовые действия). Переключение доменов — F2 (norton-стиль)."""
 
-    TITLE = "start — manager (Claude · Files · Commands)"
+    TITLE = "start — manager (AI · Files · Commands)"
 
     CSS = """
     Screen { layout: vertical; }
@@ -817,7 +863,7 @@ class ManagerApp(App):
         Binding("f2", "toggle_domain", "Domain ⇄", show=True),
     ]
 
-    def __init__(self, initial_domain: str = "dom-claude",
+    def __init__(self, initial_domain: str = "dom-ai",
                  initial_tab: str | None = None) -> None:
         super().__init__()
         self._initial_domain = initial_domain
@@ -831,11 +877,12 @@ class ManagerApp(App):
             # отдельные вьюхи без вкладок. ContentSwitcher показывает домен по id.
             yield Static(self._domain_bar_text(self._initial_domain), id="domain-bar")
             with ContentSwitcher(initial=self._initial_domain, id="domains"):
-                with TabbedContent(id="dom-claude", initial=self._initial_tab or "tab-agents"):
+                with TabbedContent(id="dom-ai", initial=self._initial_tab or "tab-agents"):
                     yield AgentsPane("Agents", id="tab-agents")
                     yield SkillsPane("Skills", id="tab-skills")
                     yield PluginsPane("Plugins", id="tab-plugins")
                     yield McpPane("MCP", id="tab-mcp")
+                    yield StatusPane("Status", id="tab-status")
                 yield FilesPane(id="dom-files")
                 yield CommandsPane(id="dom-commands")
         yield Footer()
@@ -897,7 +944,7 @@ def run_manage(target: str | None = None) -> int:
         print(f"Неизвестный раздел: {target!r}. Доступны: {', '.join(M_TARGETS)}",
               file=sys.stderr)
         return 1
-    domain, tab = M_TARGETS.get(target or "", ("dom-claude", None))
+    domain, tab = M_TARGETS.get(target or "", ("dom-ai", None))
     ManagerApp(domain, tab).run()
     _clear_if_no_altscreen()
     return 0

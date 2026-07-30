@@ -6,13 +6,16 @@
 
 from __future__ import annotations
 
-# Дружественное имя раздела → (id домена в ContentSwitcher, опц. id вкладки Claude).
+# Дружественное имя раздела → (id домена в ContentSwitcher, опц. id вкладки AI).
 M_TARGETS: dict[str, tuple[str, str | None]] = {
-    "claude": ("dom-claude", None),
-    "agents": ("dom-claude", "tab-agents"),
-    "skills": ("dom-claude", "tab-skills"),
-    "plugins": ("dom-claude", "tab-plugins"),
-    "mcp": ("dom-claude", "tab-mcp"),
+    "ai": ("dom-ai", None),
+    "ai:claude": ("dom-ai", "tab-status"),
+    "ai:codex": ("dom-ai", "tab-status"),
+    "agents": ("dom-ai", "tab-agents"),
+    "skills": ("dom-ai", "tab-skills"),
+    "plugins": ("dom-ai", "tab-plugins"),
+    "mcp": ("dom-ai", "tab-mcp"),
+    "status": ("dom-ai", "tab-status"),
     "files": ("dom-files", None),
     "commands": ("dom-commands", None),
     "scripts": ("dom-commands", None),

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from . import config
 from .config import REPO_DIR, is_skill
+from .up import run_up
 
 CONTRIB = REPO_DIR / "contrib"
 
@@ -114,19 +115,18 @@ def add_submodule(
         err = (proc.stderr or proc.stdout).strip()
         return AddResult(False, f"git submodule add не удался: {err}")
 
-    # 2a. нативный плагин? (.claude-plugin/) → регистрируем как [[plugins]], не [[skills]].
-    if (sub_path / ".claude-plugin").is_dir():
+    # 2a. Нативный plugin любой поддерживаемой платформы.
+    if config._native_plugin_paths(sub_path):
         added = config.add_plugin_source(sub_rel)
         install_errors = 0
         if do_install:
-            from .up import run_up
             install_errors = run_up(skip_submodules=True, quiet=quiet)
         mp, plugin, _ = config.read_plugin_manifest(sub_path)
         ref = f"{plugin}@{mp}" if plugin and mp else sub_rel
         src_note = "плагин зарегистрирован" if added else "плагин уже был в config.toml"
         return AddResult(
             ok=True,
-            message=f"{sub_rel} подключён как нативный плагин ({ref}), {src_note}",
+            message=f"{sub_rel} подключён как общий AI-плагин ({ref}), {src_note}",
             source_path=sub_rel,
             submodule_path=sub_rel,
             install_errors=install_errors,
@@ -149,8 +149,17 @@ def add_submodule(
     skills_subdir = skills_subdir.strip().strip("/")
     source_rel = f"{sub_rel}/{skills_subdir}" if skills_subdir else sub_rel
 
-    # 3. записать [[skills]] в config.toml
+    # 3. записать [[ai.skills]] и, если рядом есть agents/*.md, [[ai.agents]].
     added = config.add_source(source_rel)
+    agent_candidates = [sub_path / "agents"]
+    if skills_subdir:
+        agent_candidates.append((sub_path / skills_subdir).parent / "agents")
+    agent_paths: list[str] = []
+    for candidate in agent_candidates:
+        if candidate.is_dir() and any(candidate.glob("*.md")):
+            rel = str(candidate.relative_to(REPO_DIR))
+            if config.add_agent_source(rel):
+                agent_paths.append(rel)
     if not added and not quiet:
         # path уже был — не ошибка, но сообщим.
         pass
@@ -158,10 +167,11 @@ def add_submodule(
     # 4. install
     install_errors = 0
     if do_install:
-        from .up import run_up
         install_errors = run_up(skip_submodules=True, quiet=quiet)
 
     src_note = "источник добавлен" if added else "источник уже был в config.toml"
+    if agent_paths:
+        src_note += f"; agents: {', '.join(agent_paths)}"
     return AddResult(
         ok=True,
         message=f"{sub_rel} подключён, {src_note}: {source_rel}",

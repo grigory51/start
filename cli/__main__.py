@@ -8,6 +8,9 @@ from __future__ import annotations
 import argparse
 import sys
 
+from . import completion, config, plugins, settings
+from .install import Ctx
+from .submodule import add_submodule
 from .up import run_up
 
 
@@ -24,21 +27,16 @@ def _cmd_up(args: argparse.Namespace) -> int:
 
 
 def _cmd_settings(args: argparse.Namespace) -> int:
-    from . import config
-    from . import settings as settings_mod
     if args.remove:
-        return settings_mod.remove_managed(dry_run=args.dry_run)
-    return settings_mod.merge_into_settings(config.load_plugins(), dry_run=args.dry_run)
+        return settings.remove_managed(dry_run=args.dry_run)
+    return settings.merge_into_settings(config.load_plugins(), dry_run=args.dry_run)
 
 
 def _cmd_seed(args: argparse.Namespace) -> int:
     """Пересобрать plugin seed (+ merge settings), не трогая loose-symlink'и."""
-    from .install import Ctx
-    from . import plugins as plugins_mod
-    from . import settings as settings_mod
     ctx = Ctx(dry_run=args.dry_run, force=False)
-    res = plugins_mod.build_seed(ctx)
-    ctx.errors += settings_mod.merge_into_settings(res.plugins, dry_run=args.dry_run)
+    res = plugins.build_seed(ctx)
+    ctx.errors += settings.merge_into_settings(res.plugins, dry_run=args.dry_run)
     if ctx.errors:
         print(f"Готово с предупреждениями: {ctx.errors}.")
     return 1 if ctx.errors else 0
@@ -50,7 +48,6 @@ def _cmd_manage(args: argparse.Namespace) -> int:
 
 
 def _cmd_add_submodule(args: argparse.Namespace) -> int:
-    from .submodule import add_submodule
     res = add_submodule(
         args.url,
         name=args.name,
@@ -64,14 +61,13 @@ def _cmd_add_submodule(args: argparse.Namespace) -> int:
 
 
 def _cmd_completion(args: argparse.Namespace) -> int:
-    from .completion import write
-    return write(check=args.check)
+    return completion.write(check=args.check)
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="start",
-        description="Переносимый сетап машины: домены Claude (~/.claude) + Files ($HOME) симлинками из репо, и TUI.",
+        description="Переносимый сетап машины: единый AI-каталог для Claude/Codex, Files и TUI.",
     )
     sub = ap.add_subparsers(dest="cmd")
 
@@ -85,8 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="пропустить сборку plugin seed")
     up.add_argument("--no-settings", action="store_true",
                     help="пропустить merge ~/.claude/settings.json")
-    up.add_argument("--only", choices=["claude", "files"], default=None,
-                    help="гонять только один домен: claude (~/.claude) или files ($HOME)")
+    up.add_argument("--only", choices=["ai", "ai:claude", "ai:codex", "files"], default=None,
+                    help="гонять AI целиком, отдельный backend или files")
     up.set_defaults(func=_cmd_up)
 
     st = sub.add_parser("settings", help="merge managed-ключей в ~/.claude/settings.json (sidecar)")
@@ -101,10 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     manage = sub.add_parser(
         "manage", aliases=["m"],
-        help="TUI: домены Claude/Files/Команды (алиас m; быстрый переход — `m scripts`, `m plugins`, …)")
+        help="TUI: домены AI/Files/Команды (алиас m; быстрый переход — `m skills`, `m plugins`, …)")
     manage.add_argument("section", nargs="?", default=None,
                         help="открыть сразу на разделе: scripts/commands, files, "
-                             "claude, agents, skills, plugins, mcp")
+                             "ai, ai:claude, ai:codex, agents, skills, plugins, mcp")
     manage.set_defaults(func=_cmd_manage)
 
     addsub = sub.add_parser(

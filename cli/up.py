@@ -28,7 +28,7 @@ def run_up(*, dry_run: bool = False, force: bool = False, quiet: bool = False,
 
     skip_submodules: пропустить git-шаг. skip_seed/skip_settings: пропустить сборку
     плагинов / merge settings (для быстрого toggle loose-скилов из UI). only:
-    "claude" | "files" — гонять только один домен (None = оба); при only="files"
+    "ai" | "ai:claude" | "ai:codex" | "files" — ограничить синхронизацию;
     git-шаг не нужен (dotfiles в репо, не в сабмодулях).
     """
     need_submodules = not skip_submodules and not dry_run and only != "files"

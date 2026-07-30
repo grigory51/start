@@ -2,7 +2,8 @@
 
 Здесь только переиспользуемые примитивы (Ctx, link, ensure_real_dir, …) и
 оркестратор run_install. Доменные шаги вынесены:
-  • Claude (~/.claude) — cli/claude.py: agents/skills/commands/hooks/CLAUDE.md/rules/statusline;
+  • Claude (~/.claude) — cli/ai/claude.py;
+  • Codex  (~/.codex, ~/.agents) — cli/ai/codex.py;
   • Files  ($HOME)     — cli/files.py: dotfiles ([[dotfiles]]).
 
 Общие свойства раскладки: реальные папки под per-file/per-entry symlink'и (чтобы
@@ -15,7 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import config
+from . import adapters, config
 from . import plugins
 from . import settings
 from .config import REPO_DIR
@@ -116,11 +117,13 @@ def _symlink(src: Path, dst: Path) -> None:
 
 
 def _is_ours(p: Path) -> bool:
-    try:
-        p.resolve().relative_to(REPO_DIR)
-        return True
-    except ValueError:
-        return False
+    for root in (REPO_DIR, adapters.data_dir()):
+        try:
+            p.resolve().relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 # --- миграция folder-symlink -> реальная папка --------------------------------
@@ -190,15 +193,16 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
     (быстрый toggle loose из UI). only: "claude" | "files" — гонять только один домен
     (None = оба).
     """
-    from . import claude
+    from .ai import claude
     from . import files
 
-    do_claude = only in (None, "claude")
+    do_claude = only in (None, "ai", "ai:claude")
+    do_codex = only in (None, "ai", "ai:codex")
     do_files = only in (None, "files")
     ctx = Ctx(dry_run, force)
     if not quiet:
         ctx.say(f"Репо:        {REPO_DIR}")
-        ctx.say(f"Назначение:  {CLAUDE_DIR}  |  $HOME")
+        ctx.say(f"Назначение:  {CLAUDE_DIR}  |  ~/.codex + ~/.agents  |  $HOME")
         if ctx.dry_run:
             ctx.say("(dry-run: изменения не применяются)")
         ctx.say()
@@ -213,10 +217,19 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
         ctx.say()
         do_claude = False
 
+    if do_codex and not adapters.platform_available("codex"):
+        _section(ctx, "Codex")
+        ctx.say("  ! `codex` не найден в PATH — backend Codex пропущен без валидации.")
+        ctx.say()
+        do_codex = False
+
     if do_claude:
         _section(ctx, "Claude")
         # 1. Плагины → seed (включённые [[plugins]] собираются самим claude CLI).
-        plugin_list = config.load_plugins()
+        plugin_list = [
+            plugin for plugin in config.load_plugins()
+            if adapters.supports(plugin, "claude")
+        ]
         if not skip_seed:
             seed_res = plugins.build_seed(ctx)
             plugin_list = seed_res.plugins
@@ -241,6 +254,12 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
         claude.install_rules(ctx)
         claude.install_statusline(ctx)
 
+    if do_codex:
+        from .ai import codex
+
+        _section(ctx, "Codex")
+        codex.install_codex(ctx)
+
     if do_files:
         _section(ctx, "Files")
         files.install_files(ctx)
@@ -250,9 +269,10 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
             ctx.say(f"Готово с предупреждениями: {ctx.errors}.")
         else:
             ctx.say("Готово.")
-        if do_claude:
+        if do_claude or do_codex:
             ctx.say()
-            ctx.say("Запуск оркестратора:  claude --agent architect")
-            ctx.say("Список агентов:        /agents  (внутри сессии Claude Code)")
-            ctx.say("Плагины:              /plugin  (после перезапуска claude — seed читается на старте)")
+            if do_claude:
+                ctx.say("Claude: claude --agent architect  |  /agents  |  /plugin")
+            if do_codex:
+                ctx.say("Codex:  codex  |  /statusline  |  codex plugin list")
     return ctx.errors

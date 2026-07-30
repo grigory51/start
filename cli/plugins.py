@@ -27,12 +27,15 @@ Double-buffer, чтобы `up` не ломал бегущие сессии: ре
 from __future__ import annotations
 
 import os
+import errno
+import fcntl
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config
+from . import adapters, config
 from .config import REPO_DIR
 
 SEED_DIR = REPO_DIR / ".seed"          # стабильный путь (env CLAUDE_CODE_PLUGIN_SEED_DIR) — symlink на активный буфер
@@ -112,6 +115,32 @@ def check_requirements(ctx, ref: str, requirements) -> None:
 
 
 def build_seed(ctx) -> SeedResult:
+    """Serialize seed rebuilds so concurrent ``up`` processes cannot share a buffer."""
+    if ctx.dry_run:
+        return _build_seed(ctx)
+    SEED_STORE.mkdir(parents=True, exist_ok=True)
+    lock_path = SEED_STORE / ".lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            return _build_seed(ctx)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove a seed buffer, retrying transient macOS ENOTEMPTY races."""
+    for attempt in range(3):
+        try:
+            shutil.rmtree(path)
+            return
+        except OSError as exc:
+            if exc.errno != errno.ENOTEMPTY or attempt == 2:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
+def _build_seed(ctx) -> SeedResult:
     """Пересобрать plugin seed из всех включённых [[plugins]]-источников.
 
     ctx — Ctx из install.py (say/do/dry_run). Сборка в свежий буфер + атомарный swap
@@ -123,6 +152,7 @@ def build_seed(ctx) -> SeedResult:
     списком собранных ref'ов. Если claude недоступен — пустой built + предупреждение.
     """
     plugins, warnings = config._discover_plugins()
+    plugins = [plugin for plugin in plugins if adapters.supports(plugin, "claude")]
     for w in warnings:
         ctx.say(f"  ! {w}")
         ctx.errors += 1
@@ -154,7 +184,7 @@ def build_seed(ctx) -> SeedResult:
     # симлинка). Пересобираем только выбранный буфер (детерминизм, нет stale).
     buf = _pick_buffer()
     if buf.exists():
-        ctx.do(f"rm -rf {buf}", lambda: shutil.rmtree(buf))
+        ctx.do(f"rm -rf {buf}", lambda: _remove_tree(buf))
     ctx.do(f"mkdir -p {buf}", lambda: buf.mkdir(parents=True, exist_ok=True))
 
     for p in enabled:
@@ -168,7 +198,8 @@ def build_seed(ctx) -> SeedResult:
             res.built.append(p.ref)
             continue
 
-        add = _run(["claude", "plugin", "marketplace", "add", str(p.path)], buf)
+        source = p.path if (p.path / ".claude-plugin").is_dir() else p.platform_paths["claude"]
+        add = _run(["claude", "plugin", "marketplace", "add", str(source)], buf)
         if add.returncode != 0:
             err = (add.stderr or add.stdout).strip().splitlines()[-1:] or [""]
             ctx.say(f"  ! {p.ref}: marketplace add не удался — {err[0]}")
@@ -192,7 +223,7 @@ def build_seed(ctx) -> SeedResult:
         mp_link.parent.mkdir(parents=True, exist_ok=True)
         if mp_link.is_symlink() or mp_link.exists():
             mp_link.unlink()
-        mp_link.symlink_to(p.path)
+        mp_link.symlink_to(source)
 
         ctx.say(f"  + {p.ref} -> seed")
         res.built.append(p.ref)

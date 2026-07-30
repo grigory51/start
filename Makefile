@@ -1,11 +1,11 @@
-.PHONY: up claude files manage seed settings
+.PHONY: up ai ai\:claude ai\:codex files manage seed settings
 
 # Флаги для start пробрасываются после `--`, напр.:
 #   make up -- --force
-#   make claude -- --dry-run
+#   make ai:claude -- --dry-run
 # Всё, что не имя цели, попадает в ARGS и уходит в команду; лишние goals гасятся
 # no-op правилом ниже, чтобы make не ругался «No rule to make target».
-ARGS := $(filter-out up claude files manage seed settings,$(MAKECMDGOALS))
+ARGS := $(filter-out up ai ai:claude ai:codex files manage seed settings,$(MAKECMDGOALS))
 
 # START — обёртка запуска CLI: сама выбирает uv, а без него поднимает локальный .venv
 # (см. scripts/run.sh). Чтобы `make …` работал и на машинах без uv (напр. Debian-нетбук).
@@ -15,9 +15,16 @@ START := ./scripts/run.sh
 up:
 	$(START) up $(ARGS)
 
-# claude — только домен Claude (~/.claude): сабмодули + seed + symlink'и + settings.
-claude:
-	$(START) up --only claude $(ARGS)
+ai:
+	$(START) up --only ai $(ARGS)
+
+# ai:claude — только Claude backend.
+ai\:claude:
+	$(START) up --only ai:claude $(ARGS)
+
+# ai:codex — только Codex backend.
+ai\:codex:
+	$(START) up --only ai:codex $(ARGS)
 
 # files — только домен Files ($HOME): симлинки [[dotfiles]] (без сабмодулей/seed/settings).
 files:

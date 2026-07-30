@@ -1,6 +1,6 @@
 ---
 name: static-publish
-description: Публикует статику (HTML-файл или папку с готовым сайтом) в Yandex Object Storage — бакет ozhegov.name, папка site/, отдаётся по https://storage.yandexcloud.net/ozhegov.name/site/.... Каждый вызов кладёт всё в свежий префикс site/<имя>/, не перетирая прежнее. Используй, когда нужно выложить/зашерить статическую страницу, HTML-отчёт, лендинг, превью или папку со статикой по публичной ссылке. Триггеры: опубликовать страницу, выложить html, залить статику в s3, static publish, share html, deploy static page, публичная ссылка на отчёт.
+description: "Публикует статику (HTML-файл или папку с готовым сайтом) в Yandex Object Storage — бакет ozhegov.name, папка site/, отдаётся по https://storage.yandexcloud.net/ozhegov.name/site/.... Каждый вызов кладёт всё в свежий именной префикс внутри site/, не перетирая прежнее. Используй, когда нужно выложить или зашерить статическую страницу, HTML-отчёт, лендинг, превью или папку со статикой по публичной ссылке. Триггеры: опубликовать страницу, выложить html, залить статику в s3, static publish, share html, deploy static page, публичная ссылка на отчёт."
 ---
 
 # static-publish

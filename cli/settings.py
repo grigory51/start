@@ -22,7 +22,7 @@ import json
 import os
 from pathlib import Path
 
-from . import config
+from . import claudejson, config
 from .plugins import SEED_DIR
 
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude"))
@@ -105,18 +105,17 @@ def build_fragment(plugins: list[config.Plugin]) -> dict:
 
 
 def _build_hooks_fragment() -> dict:
-    """hooks-фрагмент из [[claude.hooks]] config.toml: {event: [{hooks:[{type:command,command}]}]}.
+    """Claude hooks-фрагмент из [[ai.hooks]].
 
-    [[claude.hooks]] запись: path (rel к репо, *.sh) + events (список имён событий CC).
+    [[ai.hooks]]: path (rel к репо, *.sh) + events.
     Команда — `bash "<~/.claude/hooks/basename>"` (файл туда симлинкает install-слой).
     Группируем по событию.
     """
-    warnings: list[str] = []
-    base = config._load_doc(config.CONFIG, warnings)
     by_event: dict[str, list[dict]] = {}
-    for entry in config._claude(base).get("hooks", []):
-        path = (entry.get("path") or "").strip()
-        events = entry.get("events") or []
+    entries, _ = config.load_hooks("claude")
+    for entry in entries:
+        path = entry["path"]
+        events = entry["events"]
         if not path or not events:
             continue
         name = Path(path).name
@@ -260,7 +259,6 @@ def merge_into_settings(plugins: list[config.Plugin], *, dry_run: bool = False) 
     new_sidecar["hookCommands"] = new_sigs
 
     # --- user-scope MCP → ~/.claude.json (CC не читает MCP из settings.json) ---
-    from . import claudejson
     mcp_errors, mcp_owned = claudejson.merge_mcp(prev["claudeJsonMcpServers"], dry_run=dry_run)
     new_sidecar["claudeJsonMcpServers"] = mcp_owned
 
@@ -351,7 +349,6 @@ def remove_managed(*, dry_run: bool = False) -> int:
     print("Settings --remove:")
     for r in removed:
         print(f"  -{r}")
-    from . import claudejson
     claudejson.remove_mcp(mcp_keys, dry_run=dry_run)
     if dry_run:
         print("  [dry-run] не изменено")

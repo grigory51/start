@@ -14,9 +14,12 @@
 from __future__ import annotations
 
 import sys
+import json
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import tomlkit
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 CONFIG = REPO_DIR / "config.toml"
@@ -46,6 +49,7 @@ class Skill:
     requirements: list[dict] = field(default_factory=list)
     # True, если у источника этого скила есть запись в config.local.toml ([local.skills]).
     source_has_local: bool = False
+    platforms: tuple[str, ...] = ("claude", "codex")
 
 
 @dataclass
@@ -55,6 +59,7 @@ class Agent:
     path: Path
     source: str = ""     # path источника из config.toml ([[agents]])
     description: str = ""
+    platforms: tuple[str, ...] = ("claude", "codex")
 
 
 @dataclass
@@ -80,6 +85,11 @@ class Plugin:
     # Состояние для TUI: base — из config.toml; local — из config.local.toml (None = нет).
     enabled_base: bool = True
     enabled_local: bool | None = None
+    platforms: tuple[str, ...] = ("claude", "codex")
+    # Native representation(s) available in the source tree. Adapters prefer these
+    # and only generate the missing platform representation.
+    native_platforms: tuple[str, ...] = ()
+    platform_paths: dict[str, Path] = field(default_factory=dict)
 
     @property
     def ref(self) -> str:
@@ -94,6 +104,7 @@ class Command:
     path: Path
     source: str = ""     # path источника из config.toml ([[commands]])
     description: str = ""
+    platforms: tuple[str, ...] = ("claude", "codex")
 
 
 @dataclass
@@ -109,6 +120,7 @@ class McpServer:
     server: dict | None = None  # inline-спека {command,args,env|url,headers}
     enabled_base: bool = True
     enabled_local: bool | None = None
+    platforms: tuple[str, ...] = ("claude", "codex")
 
 
 @dataclass
@@ -173,6 +185,11 @@ def _frontmatter_field(text: str, key: str) -> str:
 
 def _read_description(path: Path, key: str = "description") -> str:
     """Прочитать поле description из frontmatter файла. '' при любой ошибке."""
+    if path.suffix == ".toml":
+        try:
+            return str(tomllib.loads(path.read_text()).get(key) or "")
+        except (OSError, tomllib.TOMLDecodeError):
+            return ""
     try:
         # хватает первых ~4 КБ — frontmatter всегда в начале
         head = path.read_text(errors="replace")[:4096]
@@ -194,11 +211,43 @@ def _load_doc(path: Path, warnings: list[str]) -> dict:
         return {}
 
 
-def _claude(doc: dict) -> dict:
-    """Суб-таблица [claude] из config.toml ({} если нет). Домен Claude (~/.claude):
-    skills/agents/plugins/commands/mcp/hooks/env/statusline."""
-    c = doc.get("claude")
-    return c if isinstance(c, dict) else {}
+def _ai(doc: dict) -> dict:
+    """Суб-таблица [ai] из config.toml.
+
+    Старый [claude] намеренно не читается: каталог AI мигрируется атомарно и не
+    должен незаметно расходиться между двумя форматами.
+    """
+    value = doc.get("ai")
+    return value if isinstance(value, dict) else {}
+
+
+def _legacy_schema_warning(doc: dict, warnings: list[str]) -> None:
+    if isinstance(doc.get("claude"), dict):
+        warnings.append(
+            "устаревшая секция [claude.*]; перенесите её в [ai.*] "
+            "(старый формат не поддерживается)"
+        )
+
+
+def _platforms(entry: dict, rel: str, warnings: list[str]) -> tuple[str, ...]:
+    """Платформы компонента; по умолчанию строгая поддержка обеих."""
+    raw = entry.get("platforms", ["claude", "codex"])
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        warnings.append(f"{rel}: platforms должен быть списком — использую обе платформы")
+        return ("claude", "codex")
+    out: list[str] = []
+    for item in raw:
+        platform = str(item).strip().lower()
+        if platform not in ("claude", "codex"):
+            warnings.append(f"{rel}: неизвестная платформа '{platform}' — игнорирую")
+            continue
+        if platform not in out:
+            out.append(platform)
+    if not out:
+        warnings.append(f"{rel}: platforms пуст — компонент не будет установлен")
+    return tuple(out)
 
 
 def _files(doc: dict) -> dict:
@@ -263,14 +312,17 @@ def _enabled_spec(entry: dict) -> list[str]:
 
 
 def _load_local(warnings: list[str]) -> dict:
-    """Секция [local] из config.local.toml ({} если файла нет).
+    """Секция [local.ai] из config.local.toml ({} если файла нет).
 
     Формат: [local.<section>] <key> = <enabled>. section ∈ skills/agents/commands/
     plugins/mcp. key — path источника (или name для mcp). Только переопределяет enabled.
     """
     doc = _load_doc(CONFIG_LOCAL, warnings)
     local = doc.get("local", {})
-    return local if isinstance(local, dict) else {}
+    if not isinstance(local, dict):
+        return {}
+    ai = local.get("ai", {})
+    return ai if isinstance(ai, dict) else {}
 
 
 def _effective_spec(lsec: dict, key: str, base_entry: dict) -> list[str]:
@@ -327,6 +379,7 @@ def load() -> ConfigResult:
     """
     res = ConfigResult()
     base = _load_doc(CONFIG, res.warnings)
+    _legacy_schema_warning(base, res.warnings)
     lsec = _load_local(res.warnings).get("skills", {})
 
     if not base and not CONFIG.is_file():
@@ -334,7 +387,7 @@ def load() -> ConfigResult:
         return res
 
     seen: dict[str, Skill] = {}
-    for rel, entry in _sources(_claude(base), res.warnings):
+    for rel, entry in _sources(_ai(base), res.warnings):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             res.warnings.append(
@@ -370,6 +423,7 @@ def load() -> ConfigResult:
                 symlinks=symlinks,
                 requirements=requirements,
                 source_has_local=has_local,
+                platforms=_platforms(entry, rel, res.warnings),
             )
 
     # Порядок: источники в порядке config.toml, внутри — имена по алфавиту
@@ -387,10 +441,11 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    _legacy_schema_warning(base, warnings)
     lsec = _load_local(warnings).get("agents", {})
 
     seen: dict[str, Agent] = {}
-    for rel, entry in _sources(_claude(base), warnings, key="agents"):
+    for rel, entry in _sources(_ai(base), warnings, key="agents"):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             warnings.append(
@@ -399,7 +454,10 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
             continue
 
         exclude = set(entry.get("exclude", []))
-        available = {p.stem: p for p in root.glob("*.md")}
+        available: dict[str, Path] = {}
+        for pattern in ("*.md", "*.toml"):
+            for path in sorted(root.glob(pattern)):
+                available.setdefault(path.stem, path)
 
         spec = _effective_spec(lsec, rel, entry)
         selected = _select_names(spec, list(available))
@@ -407,7 +465,7 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
             if n != "*" and n not in available:
                 warnings.append(f"{rel}: агент '{n}' не найден (нет {n}.md)")
 
-        for n in sorted(selected):
+        for n in sorted(set(available) & selected):
             if n in exclude:
                 continue
             if n in seen:
@@ -416,7 +474,8 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
                     f"(уже взят из {seen[n].source})")
                 continue
             seen[n] = Agent(name=n, path=available[n], source=rel,
-                            description=_read_description(available[n]))
+                            description=_read_description(available[n]),
+                            platforms=_platforms(entry, rel, warnings))
     return list(seen.values()), warnings
 
 
@@ -450,8 +509,6 @@ def read_plugin_manifest(path: Path) -> tuple[str, str, list[str]]:
     marketplace.json нет plugins[]). session_start_cmds — shell-команды SessionStart-хуков
     из hooks/hooks.json (для предупреждения). Пустые строки при отсутствии/ошибке.
     """
-    import json
-
     mp_name = plugin_name = ""
     mp_file = path / ".claude-plugin" / "marketplace.json"
     if mp_file.is_file():
@@ -477,10 +534,62 @@ def read_plugin_manifest(path: Path) -> tuple[str, str, list[str]]:
     return mp_name, plugin_name, _scan_session_start(path)
 
 
+def _json_object(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _native_plugin_paths(root: Path) -> dict[str, Path]:
+    """Найти нативные корни Claude/Codex внутри source.
+
+    Marketplace-repositories часто держат реальный plugin в подпапке. Корневой
+    manifest имеет приоритет, затем выбирается первый путь по алфавиту.
+    """
+    found: dict[str, Path] = {}
+    for platform, marker in (
+        ("claude", ".claude-plugin/plugin.json"),
+        ("codex", ".codex-plugin/plugin.json"),
+    ):
+        marketplace = _json_object(root / f".{platform}-plugin" / "marketplace.json")
+        entries = marketplace.get("plugins", [])
+        if isinstance(entries, list) and entries:
+            source = entries[0].get("source") if isinstance(entries[0], dict) else None
+            if isinstance(source, dict):
+                source = source.get("path")
+            if isinstance(source, str):
+                candidate = (root / source).resolve()
+                if (candidate / marker).is_file():
+                    found[platform] = candidate
+                    continue
+        direct = root / marker
+        if direct.is_file():
+            found[platform] = root
+            continue
+        matches = sorted(root.glob(f"*/{marker}")) + sorted(root.glob(f"*/*/{marker}"))
+        if matches:
+            found[platform] = matches[0].parent.parent
+    return found
+
+
+def _plugin_metadata(root: Path, native: dict[str, Path]) -> tuple[str, str, str]:
+    """Общая идентичность plugin: marketplace, name, description."""
+    mp, name, _ = read_plugin_manifest(root)
+    description = ""
+    for platform in ("claude", "codex"):
+        plugin_root = native.get(platform)
+        if not plugin_root:
+            continue
+        manifest = _json_object(plugin_root / f".{platform}-plugin" / "plugin.json")
+        name = name or str(manifest.get("name") or "")
+        description = description or str(manifest.get("description") or "")
+    return mp or "personal", name, description
+
+
 def _scan_session_start(path: Path) -> list[str]:
     """SessionStart shell-команды из hooks/hooks.json плагина ([] при отсутствии)."""
-    import json
-
     hooks_file = path / "hooks" / "hooks.json"
     if not hooks_file.is_file():
         return []
@@ -530,18 +639,20 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    _legacy_schema_warning(base, warnings)
     lsec = _load_local(warnings).get("plugins", {})
 
     seen: dict[str, Plugin] = {}
-    for rel, entry in _sources(_claude(base), warnings, key="plugins"):
+    for rel, entry in _sources(_ai(base), warnings, key="plugins"):
         root = (REPO_DIR / rel).resolve()
-        if not (root / ".claude-plugin").is_dir():
+        native = _native_plugin_paths(root) if root.is_dir() else {}
+        if not native:
             warnings.append(
-                f"источник плагина не найден или без .claude-plugin/: {rel} "
+                f"источник плагина не найден или без native manifest: {rel} "
                 f"(для сабмодуля — git submodule update --init)")
             continue
 
-        mp_name, plugin_name, ss_hooks = read_plugin_manifest(root)
+        mp_name, plugin_name, description = _plugin_metadata(root, native)
         mp_name = entry.get("marketplace") or mp_name
         plugin_name = entry.get("plugin") or plugin_name
         if not mp_name or not plugin_name:
@@ -559,11 +670,16 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
             name=root.name, path=root, source=rel,
             marketplace=mp_name, plugin=plugin_name,
             enabled=_effective_bool(lsec, rel, entry),
-            description=_read_description(root / ".claude-plugin" / "plugin.json"),
-            session_start_hooks=ss_hooks,
+            description=description,
+            session_start_hooks=(
+                _scan_session_start(native["claude"]) if "claude" in native else []
+            ),
             requirements=_parse_requirements(entry, rel, warnings),
             enabled_base=_bool_enabled(entry),
             enabled_local=(_bool_enabled({"enabled": lsec[rel]}) if rel in lsec else None),
+            platforms=_platforms(entry, rel, warnings),
+            native_platforms=tuple(native),
+            platform_paths=native,
         )
     return list(seen.values()), warnings
 
@@ -580,10 +696,11 @@ def _discover_commands() -> tuple[list[Command], list[str]]:
     """Все команды из [[commands]]-источников. Зеркало _discover_agents (*.md)."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    _legacy_schema_warning(base, warnings)
     lsec = _load_local(warnings).get("commands", {})
 
     seen: dict[str, Command] = {}
-    for rel, entry in _sources(_claude(base), warnings, key="commands"):
+    for rel, entry in _sources(_ai(base), warnings, key="commands"):
         root = (REPO_DIR / rel).resolve()
         if not root.is_dir():
             warnings.append(f"источник команд не найден: {rel}")
@@ -606,7 +723,8 @@ def _discover_commands() -> tuple[list[Command], list[str]]:
                     f"(уже взята из {seen[n].source})")
                 continue
             seen[n] = Command(name=n, path=available[n], source=rel,
-                              description=_read_description(available[n]))
+                              description=_read_description(available[n]),
+                              platforms=_platforms(entry, rel, warnings))
     return list(seen.values()), warnings
 
 
@@ -618,7 +736,7 @@ def load_commands() -> list[Command]:
 
 # --- MCP-серверы --------------------------------------------------------------
 
-def load_statusline() -> dict | None:
+def load_statusline(platform: str = "claude") -> dict | None:
     """`[statusline]` из config.toml: {path, dest, command, requirements} или None.
 
     path — *.mjs/*.sh относительно репо; dest — имя в ~/.claude/; command — строка
@@ -628,9 +746,22 @@ def load_statusline() -> dict | None:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    sl = _claude(base).get("statusline")
+    sl = _ai(base).get("statusline")
     if not isinstance(sl, dict):
         return None
+    platform_sl = sl.get(platform)
+    if isinstance(platform_sl, dict):
+        sl = platform_sl
+    elif platform == "codex":
+        return None
+    if platform == "codex":
+        items = sl.get("items")
+        if not isinstance(items, list):
+            return None
+        return {
+            "items": [str(x) for x in items],
+            "use_colors": bool(sl.get("use_colors", True)),
+        }
     path = (sl.get("path") or "").strip()
     command = (sl.get("command") or "").strip()
     if not path or not command:
@@ -649,10 +780,29 @@ def load_env() -> dict[str, str]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    env = _claude(base).get("env", {})
+    env = _ai(base).get("platforms", {}).get("claude", {}).get("env", {})
     if not isinstance(env, dict):
         return {}
     return {str(k): str(v) for k, v in env.items()}
+
+
+def load_hooks(platform: str) -> tuple[list[dict], list[str]]:
+    """Loose hooks enabled for a platform."""
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    out: list[dict] = []
+    for entry in _ai(base).get("hooks", []):
+        if not isinstance(entry, dict):
+            continue
+        path = str(entry.get("path") or "").strip()
+        events = entry.get("events")
+        if not path or not isinstance(events, list):
+            warnings.append("[[ai.hooks]] требует path и events")
+            continue
+        if platform not in _platforms(entry, path, warnings):
+            continue
+        out.append({"path": path, "events": [str(event) for event in events]})
+    return out, warnings
 
 
 def load_dotfiles() -> tuple[list[dict], list[str]]:
@@ -731,10 +881,11 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
+    _legacy_schema_warning(base, warnings)
     lsec = _load_local(warnings).get("mcp", {})
 
     seen: dict[str, McpServer] = {}
-    for entry in _claude(base).get("mcp", []):
+    for entry in _ai(base).get("mcp", []):
         name = (entry.get("name") or "").strip()
         if not name:
             warnings.append(f"[[mcp]] без name в {CONFIG.name} — пропуск")
@@ -750,6 +901,7 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
             server=server if isinstance(server, dict) else None,
             enabled_base=_bool_enabled(entry),
             enabled_local=(_bool_enabled({"enabled": lsec[name]}) if name in lsec else None),
+            platforms=_platforms(entry, name, warnings),
         )
     # Локальные ключи без base-источника — overlay не определяет источники.
     for n in lsec:
@@ -760,36 +912,32 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
 
 # --- запись (toggle enabled) --------------------------------------------------
 
-def _claude_aot(doc, key):
-    """Найти/создать array-of-tables [[claude.<key>]] в tomlkit-документе.
+def _ai_aot(doc, key):
+    """Найти/создать array-of-tables [[ai.<key>]] в tomlkit-документе.
 
     Домен Claude вложен в таблицу [claude] (см. _claude/_files). Создаёт таблицу
     [claude] и вложенный AoT при отсутствии; комментарии/форматирование сохраняются.
     """
-    import tomlkit
-
-    claude = doc.get("claude")
-    if claude is None:
-        claude = tomlkit.table()
-        doc["claude"] = claude
-    aot = claude.get(key)
+    ai = doc.get("ai")
+    if ai is None:
+        ai = tomlkit.table()
+        doc["ai"] = ai
+    aot = ai.get(key)
     if aot is None:
         aot = tomlkit.aot()
-        claude[key] = aot
+        ai[key] = aot
     return aot
 
 
 def _write_enabled(source: str, spec: list[str]) -> None:
-    """Записать `enabled = spec` в [[claude.skills]] с path=source в версионный config.toml.
+    """Записать `enabled = spec` в [[ai.skills]] с path=source в config.toml.
 
     Правит существующую запись источника (она всегда есть — источники версионные);
     комментарии и форматирование сохраняются (tomlkit). Если записи нет — создаёт.
     """
-    import tomlkit
-
     doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
 
-    skills = _claude_aot(doc, "skills")
+    skills = _ai_aot(doc, "skills")
 
     target = None
     for tbl in skills:
@@ -818,7 +966,7 @@ def set_skill_enabled(source: str, name: str, enabled: bool) -> None:
     """
     warnings: list[str] = []
     entry: dict = {}
-    for rel, e in _sources(_load_doc(CONFIG, warnings), warnings):
+    for rel, e in _sources(_ai(_load_doc(CONFIG, warnings)), warnings):
         if rel == source:
             entry = e
             break
@@ -845,14 +993,14 @@ def set_source_enabled(source: str, enabled: bool) -> None:
 
 
 def source_paths() -> set[str]:
-    """Все path из [[claude.skills]] базового config.toml (для проверки дублей)."""
+    """Все path из [[ai.skills]] базового config.toml (для проверки дублей)."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    return {e["path"] for e in _entries(_claude(base), CONFIG.name, warnings, key="skills")}
+    return {e["path"] for e in _entries(_ai(base), CONFIG.name, warnings, key="skills")}
 
 
 def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
-    """Добавить [[claude.skills]] с данным path в версионный config.toml (tomlkit).
+    """Добавить [[ai.skills]] с данным path в версионный config.toml (tomlkit).
 
     Добавление сабмодуля — версионное изменение (как запись в .gitmodules), пишем
     в config.toml. Комментарии/форматирование
@@ -862,15 +1010,13 @@ def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
 
     Возвращает True, если источник добавлен; False — если path уже есть.
     """
-    import tomlkit
-
     if rel_path in source_paths():
         return False
 
-    # Рендерим новый [[claude.skills]] как текст и дописываем в конец файла. tomlkit
-    # при append в AoT кладёт отбивку внутрь header'а ([[claude.skills]] + пустая
+    # Рендерим новый [[ai.skills]] как текст и дописываем в конец файла. tomlkit
+    # при append в AoT кладёт отбивку внутрь header'а ([[ai.skills]] + пустая
     # строка), что ломает выравнивание; текстовый append даёт ровно тот же стиль, что в base.
-    block = ("\n[[claude.skills]]\n"
+    block = ("\n[[ai.skills]]\n"
              f'path = "{rel_path}"\n'
              'enabled = ["*"]\n')
     if exclude:
@@ -883,17 +1029,39 @@ def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
     return True
 
 
+def agent_source_paths() -> set[str]:
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    return {e["path"] for e in _entries(_ai(base), CONFIG.name, warnings, key="agents")}
+
+
+def add_agent_source(rel_path: str) -> bool:
+    """Добавить общий [[ai.agents]] source."""
+    if rel_path in agent_source_paths():
+        return False
+    block = (
+        "\n[[ai.agents]]\n"
+        f'path = "{rel_path}"\n'
+        'enabled = ["*"]\n'
+    )
+    existing = CONFIG.read_text() if CONFIG.is_file() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    CONFIG.write_text(existing + block)
+    return True
+
+
 # --- запись (плагины) ---------------------------------------------------------
 
 def plugin_source_paths() -> set[str]:
-    """Все path из [[claude.plugins]] базового config.toml (для проверки дублей)."""
+    """Все path из [[ai.plugins]] базового config.toml (для проверки дублей)."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    return {e["path"] for e in _entries(_claude(base), CONFIG.name, warnings, key="plugins")}
+    return {e["path"] for e in _entries(_ai(base), CONFIG.name, warnings, key="plugins")}
 
 
 def add_plugin_source(rel_path: str) -> bool:
-    """Добавить [[claude.plugins]] с данным path в версионный config.toml.
+    """Добавить [[ai.plugins]] с данным path в версионный config.toml.
 
     Текстовый append (как add_source) — сохраняет стиль файла. Дубль path → False.
     Новый плагин включён (enabled = true).
@@ -901,7 +1069,7 @@ def add_plugin_source(rel_path: str) -> bool:
     if rel_path in plugin_source_paths():
         return False
 
-    block = ("\n[[claude.plugins]]\n"
+    block = ("\n[[ai.plugins]]\n"
              f'path = "{rel_path}"\n'
              'enabled = true\n')
     existing = CONFIG.read_text() if CONFIG.is_file() else ""
@@ -917,10 +1085,8 @@ def set_plugin_enabled(source: str, enabled: bool) -> None:
     Плагин атомарен → enabled — простой bool. Правит существующую [[plugins]]-запись
     (источники версионные); комментарии/форматирование сохраняются (tomlkit).
     """
-    import tomlkit
-
     doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
-    plugins = _claude_aot(doc, "plugins")
+    plugins = _ai_aot(doc, "plugins")
 
     target = None
     for tbl in plugins:
@@ -938,10 +1104,8 @@ def set_plugin_enabled(source: str, enabled: bool) -> None:
 
 def set_mcp_enabled(name: str, enabled: bool) -> None:
     """Вкл/выкл MCP `name` глобально, правя `enabled` в [[mcp]] config.toml (по name)."""
-    import tomlkit
-
     doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
-    mcp = _claude_aot(doc, "mcp")
+    mcp = _ai_aot(doc, "mcp")
     target = None
     for tbl in mcp:
         if tbl.get("name") == name:
@@ -963,17 +1127,19 @@ def _write_local(section: str, key: str, value) -> None:
     value — bool (plugins/mcp) или list[str] (skills/agents/commands). Создаёт файл и
     таблицы при необходимости. Комментарии/форматирование сохраняются.
     """
-    import tomlkit
-
     doc = tomlkit.parse(CONFIG_LOCAL.read_text()) if CONFIG_LOCAL.is_file() else tomlkit.document()
     local = doc.get("local")
     if local is None:
         local = tomlkit.table()
         doc["local"] = local
-    sect = local.get(section)
+    ai = local.get("ai")
+    if ai is None:
+        ai = tomlkit.table()
+        local["ai"] = ai
+    sect = ai.get(section)
     if sect is None:
         sect = tomlkit.table()
-        local[section] = sect
+        ai[section] = sect
 
     if isinstance(value, list):
         arr = tomlkit.array()
@@ -1008,7 +1174,7 @@ def set_skill_enabled_local(source: str, name: str, enabled: bool) -> None:
     """
     warnings: list[str] = []
     entry: dict = {}
-    for rel, e in _sources(_load_doc(CONFIG, warnings), warnings):
+    for rel, e in _sources(_ai(_load_doc(CONFIG, warnings)), warnings):
         if rel == source:
             entry = e
             break
