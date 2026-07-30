@@ -795,11 +795,16 @@ def load_hooks(platform: str) -> tuple[list[dict], list[str]]:
         if not isinstance(entry, dict):
             continue
         path = str(entry.get("path") or "").strip()
-        events = entry.get("events")
-        if not path or not isinstance(events, list):
+        if not path:
             warnings.append("[[ai.hooks]] требует path и events")
             continue
         if platform not in _platforms(entry, path, warnings):
+            continue
+        events = entry.get("events")
+        if isinstance(events, dict):
+            events = events.get(platform)
+        if not isinstance(events, list):
+            warnings.append("[[ai.hooks]] требует path и events")
             continue
         out.append({"path": path, "events": [str(event) for event in events]})
     return out, warnings

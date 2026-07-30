@@ -271,7 +271,7 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 commands = json.load(open(os.path.join(root, "hooks", "original-commands.json")))
 payload = json.load(sys.stdin)
 command = commands[int(sys.argv[1])]
-env = dict(os.environ, CODEX_PLUGIN_ROOT=root, CLAUDE_PLUGIN_ROOT=root)
+env = dict(os.environ, PLUGIN_ROOT=root, CLAUDE_PLUGIN_ROOT=root)
 payloads = [payload]
 if payload.get("tool_name") == "apply_patch":
     patch = payload.get("tool_input", {}).get("command", "")
@@ -316,7 +316,7 @@ def _adapt_hooks(source_root: Path, destination: Path) -> None:
                 index = len(commands)
                 commands.append(original)
                 hook["command"] = (
-                    f'python3 "${{CODEX_PLUGIN_ROOT}}/scripts/start-hook-adapter.py" {index}'
+                    f'python3 "${{PLUGIN_ROOT}}/scripts/start-hook-adapter.py" {index}'
                 )
     hook_dir = destination / "hooks"
     script_dir = destination / "scripts"

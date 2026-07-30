@@ -1,84 +1,96 @@
 #!/usr/bin/env bash
 #
-# notify.sh — macOS-нотификация, когда Claude Code ждёт пользователя или закончил ход.
+# notify.sh — macOS-уведомления для Claude Code и Codex.
 #
-# Регистрируется на события Notification (idle_prompt / permission_prompt) и Stop
-# в ~/.claude/settings.json (через [[hooks]] в config.toml менеджера). JSON события
-# приходит на stdin.
+# Менеджер передаёт платформу и событие через START_AI_PLATFORM/START_AI_EVENT.
+# JSON события приходит на stdin и используется для текста и рабочей директории.
 #
 # Доставка: terminal-notifier (группировка per-agent), с фолбэком на osascript,
 # если terminal-notifier не установлен.
 #
-# Про иконку: кастомную иконку Claude дать не вышло — левую иконку определяет
-# bundle отправителя, а из-под cmux terminal-notifier показывает иконку cmux
-# (`-sender` игнорируется/виснет, `-contentImage` рисует лишнюю картинку справа).
-# Оставлена дефолтная иконка терминала.
-#
 # Группировка: каждый агент (по cwd) — своя -group. Новое уведомление того же агента
-# ЗАМЕНЯЕТ предыдущее (не плодит дубли), разные агенты висят отдельно — видно, кто ждёт.
-# Чтобы уведомления НЕ исчезали сами (висели как очередь, пока не кликнешь):
-#   System Settings → Notifications → Claude → стиль «Alerts» (а не «Banners»).
+# заменяет предыдущее; уведомления разных агентов остаются независимыми.
 #
-# Всегда exit 0 — hook не должен ломать сессию.
+# Hook всегда завершается успешно, чтобы сбой доставки не влиял на сессию.
 #
 set -uo pipefail
 
 payload="$(cat 2>/dev/null || true)"
+platform="${START_AI_PLATFORM:-}"
+event="${START_AI_EVENT:-}"
 
-# --- разбор полей события (jq если есть) ---
-event=""; ntype=""; message=""; cwd=""
+# Поля payload различаются между платформами, общие поля читаются первыми.
+ntype=""; message=""; cwd=""
 if command -v jq >/dev/null 2>&1 && [ -n "$payload" ]; then
-  event="$(printf '%s'   "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null)"
+  [ -n "$event" ] || event="$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null)"
   ntype="$(printf '%s'   "$payload" | jq -r '.notification_type // empty' 2>/dev/null)"
-  message="$(printf '%s' "$payload" | jq -r '.message // empty' 2>/dev/null)"
+  message="$(printf '%s' "$payload" | jq -r '.message // .tool_input.description // empty' 2>/dev/null)"
   cwd="$(printf '%s'     "$payload" | jq -r '.cwd // empty' 2>/dev/null)"
+  if [ -z "$platform" ]; then
+    if printf '%s' "$payload" | jq -e 'has("turn_id") or has("model")' >/dev/null 2>&1; then
+      platform="codex"
+    else
+      platform="claude"
+    fi
+  fi
 fi
 
-# --- заголовок/текст по событию ---
-title="Claude Code"
+case "$platform" in
+  codex)
+    product="Codex"
+    group_prefix="codex" ;;
+  claude)
+    product="Claude"
+    group_prefix="claude" ;;
+  *)
+    product="AI"
+    group_prefix="ai" ;;
+esac
+
 case "$event" in
   Stop)
-    title="Claude закончил ход"
+    title="$product закончил ход"
     [ -z "$message" ] && message="Готов к твоему вводу" ;;
-  Notification|*)
+  PermissionRequest)
+    title="$product просит разрешение"
+    [ -z "$message" ] && message="Нужно твоё разрешение" ;;
+  Notification)
     case "$ntype" in
-      idle_prompt)       title="Claude ждёт ввода" ;;
-      permission_prompt) title="Claude просит разрешение" ;;
-      *)                 title="Claude ждёт тебя" ;;
+      idle_prompt)       title="$product ждёт ввода" ;;
+      permission_prompt) title="$product просит разрешение" ;;
+      *)                 title="$product ждёт тебя" ;;
     esac
+    [ -z "$message" ] && message="Нужно твоё действие" ;;
+  *)
+    title="$product ждёт тебя"
     [ -z "$message" ] && message="Нужно твоё действие" ;;
 esac
 
-# --- подзаголовок: путь агента от ~ (или полный, если вне ~) ---
 subtitle=""
 if [ -n "$cwd" ]; then
   case "$cwd" in
     "$HOME")    subtitle="~" ;;
-    "$HOME"/*)  subtitle="~${cwd#"$HOME"}" ;;   # внутри ~ → ~/rel/path
-    *)          subtitle="$cwd" ;;               # вне ~ → весь путь
+    "$HOME"/*)  subtitle="~${cwd#"$HOME"}" ;;
+    *)          subtitle="$cwd" ;;
   esac
 fi
 
-# --- группа per-agent (по cwd): новое заменяет старое того же агента ---
-group="claude-code"
+group="$group_prefix-code"
 if [ -n "$cwd" ]; then
   if command -v md5 >/dev/null 2>&1; then
-    group="claude-$(printf '%s' "$cwd" | md5 -q | cut -c1-12)"
+    group="$group_prefix-$(printf '%s' "$cwd" | md5 -q | cut -c1-12)"
   else
-    group="claude-$(printf '%s' "$cwd" | cksum | cut -d' ' -f1)"
+    group="$group_prefix-$(printf '%s' "$cwd" | cksum | cut -d' ' -f1)"
   fi
 fi
 
-# обрезка длинного message
 message="$(printf '%s' "$message" | cut -c1-180)"
 
-# --- доставка ---
 if command -v terminal-notifier >/dev/null 2>&1; then
   args=( -title "$title" -message "$message" -group "$group" )
   [ -n "$subtitle" ] && args+=( -subtitle "$subtitle" )
   terminal-notifier "${args[@]}" >/dev/null 2>&1 || true
 elif command -v osascript >/dev/null 2>&1; then
-  # фолбэк: без иконки/группировки. Экранируем кавычки/бэкслеши.
   esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
   m="$(esc "$message")"; t="$(esc "$title")"; s="$(esc "$subtitle")"
   if [ -n "$s" ]; then

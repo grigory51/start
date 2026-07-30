@@ -119,8 +119,11 @@ def _build_hooks_fragment() -> dict:
         if not path or not events:
             continue
         name = Path(path).name
-        cmd = f'bash "{CLAUDE_DIR / "hooks" / name}"'
         for ev in events:
+            cmd = (
+                f'START_AI_PLATFORM=claude START_AI_EVENT={ev} '
+                f'bash "{CLAUDE_DIR / "hooks" / name}"'
+            )
             by_event.setdefault(ev, []).append(
                 {"hooks": [{"type": "command", "command": cmd, "timeout": 5}]})
     return by_event

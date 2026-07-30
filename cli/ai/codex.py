@@ -310,10 +310,13 @@ def install_hooks(ctx: Ctx) -> None:
     for entry in entries:
         source = (REPO_DIR / entry["path"]).resolve()
         sources[source.name] = source
-        command = f'bash "{hook_dir / source.name}"'
         for event in entry["events"]:
             if event not in _CODEX_HOOK_EVENTS:
                 continue
+            command = (
+                f"START_AI_PLATFORM=codex START_AI_EVENT={event} "
+                f'bash "{hook_dir / source.name}"'
+            )
             fragment.setdefault(event, []).append(
                 {"hooks": [{"type": "command", "command": command, "timeout": 5}]}
             )

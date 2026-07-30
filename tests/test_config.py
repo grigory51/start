@@ -52,6 +52,25 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(any("устаревшая секция" in item for item in result.warnings))
             self.assertEqual(result.skills, [])
 
+    def test_hooks_have_platform_specific_events(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            cfg = root / "config.toml"
+            cfg.write_text(
+                '[[ai.hooks]]\npath = "ai/hooks/notify.sh"\n'
+                'events = { claude = ["Stop", "Notification"], '
+                'codex = ["Stop", "PermissionRequest"] }\n'
+            )
+            with (
+                patch.object(config, "CONFIG", cfg),
+                patch.object(config, "CONFIG_LOCAL", root / "config.local.toml"),
+            ):
+                claude, claude_warnings = config.load_hooks("claude")
+                codex, codex_warnings = config.load_hooks("codex")
+            self.assertEqual(claude[0]["events"], ["Stop", "Notification"])
+            self.assertEqual(codex[0]["events"], ["Stop", "PermissionRequest"])
+            self.assertEqual(claude_warnings + codex_warnings, [])
+
 
 if __name__ == "__main__":
     unittest.main()

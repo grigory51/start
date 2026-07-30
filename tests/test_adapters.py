@@ -98,6 +98,23 @@ class AdapterTests(unittest.TestCase):
                 "---\nname: demo-skill\ndescription: Demo skill\n"
                 "argument-hint: x\n---\n\nDo it.\n"
             )
+            hooks = plugin_root / "hooks"
+            hooks.mkdir()
+            (hooks / "hooks.json").write_text(
+                json.dumps(
+                    {
+                        "hooks": {
+                            "PreToolUse": [
+                                {
+                                    "hooks": [
+                                        {"type": "command", "command": "echo check"}
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
             plugin = config.Plugin(
                 name="demo-plugin",
                 path=plugin_root,
@@ -120,6 +137,11 @@ class AdapterTests(unittest.TestCase):
             self.assertNotIn("hooks", manifest)
             normalized = (generated / "skills" / "demo-skill" / "SKILL.md").read_text()
             self.assertNotIn("argument-hint", normalized)
+            generated_hooks = json.loads(
+                (generated / "hooks" / "hooks.json").read_text()
+            )
+            command = generated_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            self.assertIn("${PLUGIN_ROOT}/scripts/start-hook-adapter.py", command)
             self.assertEqual(adapters.validate_generated_plugin(generated), [])
 
 
