@@ -1,0 +1,17 @@
+{
+    "type": "filament",
+    "name": "TPU CR-10 Smart Pro",
+    "from": "User",
+    "version": "2.4.0.1",
+    "is_custom_defined": "0",
+    "inherits": "Generic TPU @System",
+    "filament_settings_id": [
+        "TPU CR-10 Smart Pro"
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "pressure_advance": [
+        "0.1"
+    ]
+}

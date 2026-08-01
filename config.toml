@@ -252,6 +252,12 @@ target = "~/.vimrc"
 source = "dotfiles/iterm"
 posthook = 'defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$SOURCE" && defaults write com.googlecode.iterm2 LoadPrefsFromCustomFolder -bool true'
 
+# OrcaSlicer — пользовательские machine/process/filament профили живут в git.
+# Orca пишет новые и изменённые профили прямо через этот managed symlink.
+[[files.dotfiles]]
+source = "dotfiles/orcaslicer/default"
+target = "~/Library/Application Support/OrcaSlicer/user/default"
+
 
 # ══════════════════════════════ COMMANDS ══════════════════════════════
 # Домен «Команды»: разовые действия на машине, запускаемые из TUI по требованию

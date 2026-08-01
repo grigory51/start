@@ -1,0 +1,26 @@
+{
+    "type": "filament",
+    "name": "ABS CR-10 Smart Pro",
+    "from": "User",
+    "version": "2.4.0.1",
+    "is_custom_defined": "0",
+    "inherits": "Generic ABS @System",
+    "filament_settings_id": [
+        "ABS CR-10 Smart Pro"
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "pressure_advance": [
+        "0.045"
+    ],
+    "nozzle_temperature": [
+        "250"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "250"
+    ],
+    "filament_max_volumetric_speed": [
+        "10"
+    ]
+}

@@ -1,0 +1,26 @@
+{
+    "type": "filament",
+    "name": "PETG CR-10 Smart Pro",
+    "from": "User",
+    "version": "2.4.0.1",
+    "is_custom_defined": "0",
+    "inherits": "Generic PETG @System",
+    "filament_settings_id": [
+        "PETG CR-10 Smart Pro"
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "pressure_advance": [
+        "0.06"
+    ],
+    "nozzle_temperature": [
+        "240"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "240"
+    ],
+    "filament_max_volumetric_speed": [
+        "8"
+    ]
+}
