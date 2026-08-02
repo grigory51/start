@@ -211,15 +211,6 @@ command = "node ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline.mjs"
 # список либо таблицу { claude = [...], codex = [...] } для разных нативных событий.
 # Файл симлинкается в runtime hooks/, команда прописывается в managed-конфиг.
 
-[[ai.hooks]]
-path = "ai/hooks/notify.sh"
-events = { claude = ["Stop", "Notification"], codex = ["Stop", "PermissionRequest"] }
-
-[[ai.hooks]]
-path = "ai/hooks/focus-track.sh"
-events = ["UserPromptSubmit"]
-platforms = ["claude"]
-
 [ai.statusline.codex]
 items = ["model-with-reasoning", "current-dir", "git-branch", "context-remaining", "five-hour-limit", "weekly-limit", "fast-mode"]
 use_colors = true
@@ -243,6 +234,15 @@ use_colors = true
 # предупреждением. Наш корректный симлинк — idempotent (пропуск). Прун снятых записей
 # НЕ делается (небезопасно итерировать $HOME) — убрал запись, симлинк снимаешь сам.
 # Файлы хранить в dotfiles/ (без ведущей точки — точка в target).
+[[ai.hooks]]
+path = "ai/hooks/notify.sh"
+events = { claude = ["Stop", "Notification"], codex = ["Stop", "PermissionRequest"] }
+
+[[ai.hooks]]
+path = "ai/hooks/focus-track.sh"
+events = ["UserPromptSubmit"]
+platforms = ["claude"]
+
 [[files.dotfiles]]
 source = "dotfiles/vimrc"
 target = "~/.vimrc"

@@ -62,7 +62,7 @@ make ai:codex -- --force
 
 - глобальные инструкции и инженерные правила;
 - переиспользуемых agents с platform-specific адаптацией;
-- skills из `ai/skills` и внешних репозиториев;
+- глобальные skills из `ai/skills` и project-local skills из `.agents/skills`;
 - plugins из pinned git submodules в `contrib/`;
 - MCP-серверы, hooks и statusline.
 
@@ -93,6 +93,7 @@ PXE и диагностические scripts.
 
 ```text
 ai/         инструкции, agents, skills, hooks и statusline
+.agents/    project-local skills для этого репозитория
 dotfiles/   файлы и профили для пользовательского окружения
 scripts/    launcher, provisioning и служебные scripts
 contrib/    pinned внешние plugins и skills
