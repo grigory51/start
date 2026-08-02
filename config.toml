@@ -150,6 +150,10 @@ enabled = true
   check = "command -v bun"
   hint = "curl -fsSL https://bun.sh/install | bash  (или brew install oven-sh/bun/bun)"
 
+[[ai.plugins]]
+path = "contrib/Understand-Anything"
+enabled = true
+
 # --- Slash-команды ------------------------------------------------------------
 #
 # Рассыпанные *.md команды (как [[ai.agents]]): имя файла без .md = имя команды,
@@ -255,8 +259,12 @@ posthook = 'defaults write com.googlecode.iterm2 PrefsCustomFolder -string "$SOU
 # OrcaSlicer — пользовательские machine/process/filament профили живут в git.
 # Orca пишет новые и изменённые профили прямо через этот managed symlink.
 [[files.dotfiles]]
-source = "dotfiles/orcaslicer/default"
-target = "~/Library/Application Support/OrcaSlicer/user/default"
+source = "dotfiles/orcaslicer/default/filament"
+target = "~/Library/Application Support/OrcaSlicer/user/default/filament"
+
+[[files.dotfiles]]
+source = "dotfiles/orcaslicer/default/process"
+target = "~/Library/Application Support/OrcaSlicer/user/default/process"
 
 
 # ══════════════════════════════ COMMANDS ══════════════════════════════
@@ -313,6 +321,4 @@ sudo = true
 darwin = 'bash "$REPO/scripts/tcp-listen.sh"'
 linux = 'bash "$REPO/scripts/tcp-listen.sh"'
 
-[[ai.plugins]]
-path = "contrib/Understand-Anything"
-enabled = true
+
