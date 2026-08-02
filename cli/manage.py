@@ -7,7 +7,8 @@
     Скилы   — статус/имя/источник/описание. Enter — `SKILL.md`. Space/`t` вкл/выкл скил
               (или весь источник на заголовке), `g` — глобально; правится `enabled` в
               config.toml/config.local.toml, затем install (без сабмодулей).
-    Плагины — [[ai.plugins]]: общий toggle и синхронизация обоих backend-ов.
+    Плагины — [[ai.plugins]]: `g` открывает modal global/local настроек и синхронизирует
+              оба backend-а перед закрытием.
     MCP     — [[ai.mcp]]: toggle → Claude/Codex managed settings.
   Files   — dotfiles ([[files.dotfiles]]): просмотр записей (source/target/posthook).
             Тогглов нет — dotfiles не выключаются; Enter показывает детали записи.
@@ -26,17 +27,18 @@ import os
 import signal
 import subprocess
 import sys
+import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
-    ContentSwitcher, DataTable, Footer, Header, Input, Markdown, Static,
-    TabbedContent, TabPane,
+    Button, Checkbox, ContentSwitcher, DataTable, Footer, Header, Input, Markdown,
+    Static, TabbedContent, TabPane,
 )
 
 from . import config
@@ -193,6 +195,110 @@ class AddSubmoduleScreen(ModalScreen):
         self.dismiss(None)
 
 
+class PluginSettingsScreen(ModalScreen[bool]):
+    """Настройки plugin scope. Закрывается после полной успешной синхронизации."""
+
+    BINDINGS = [
+        Binding("escape,q", "cancel", "Cancel", show=True),
+    ]
+
+    def __init__(self, plugin: config.Plugin) -> None:
+        super().__init__()
+        self._plugin = plugin
+        self._saving = False
+
+    def compose(self) -> ComposeResult:
+        local_enabled = (
+            self._plugin.enabled_local
+            if self._plugin.enabled_local is not None
+            else self._plugin.enabled_base
+        )
+        with Container(id="plugin-settings-box"):
+            yield Static(f"[b]{self._plugin.ref}[/]", id="modal-title")
+            yield Checkbox(
+                "Global — config.toml, all machines",
+                value=self._plugin.enabled_base,
+                id="plugin-global",
+            )
+            yield Checkbox(
+                "Local — config.local.toml, this machine",
+                value=local_enabled,
+                id="plugin-local",
+            )
+            yield Static(
+                "Save applies both values and synchronizes Claude and Codex before closing.",
+                classes="plugin-settings-help",
+            )
+            with VerticalScroll(id="plugin-settings-output"):
+                yield Static("", id="plugin-settings-status", markup=False)
+            with Horizontal(id="plugin-settings-actions"):
+                yield Button("Save", variant="primary", id="plugin-settings-save")
+            yield Static("[dim]Esc / q — cancel[/]", id="modal-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#plugin-global", Checkbox).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "plugin-settings-save":
+            self._save()
+
+    def _save(self) -> None:
+        if self._saving:
+            return
+        global_enabled = self.query_one("#plugin-global", Checkbox).value
+        local_enabled = self.query_one("#plugin-local", Checkbox).value
+        self._set_saving(True)
+        self._save_worker(global_enabled, local_enabled)
+
+    def _set_saving(self, saving: bool) -> None:
+        self._saving = saving
+        self.query_one("#plugin-global", Checkbox).disabled = saving
+        self.query_one("#plugin-local", Checkbox).disabled = saving
+        button = self.query_one("#plugin-settings-save", Button)
+        button.disabled = saving
+        button.label = "Saving…" if saving else "Save"
+        if saving:
+            self.query_one("#plugin-settings-status", Static).update(
+                "Applying configuration and synchronizing Claude and Codex…"
+            )
+
+    @work(thread=True, exclusive=True)
+    def _save_worker(self, global_enabled: bool, local_enabled: bool) -> None:
+        output = io.StringIO()
+        try:
+            config.set_plugin_enabled(self._plugin.source, enabled=global_enabled)
+            config.set_plugin_enabled_local(self._plugin.source, enabled=local_enabled)
+            if not local_enabled:
+                _clear_plugin_flag(self._plugin.plugin)
+            with redirect_stdout(output):
+                errors = run_up(skip_submodules=True, quiet=True)
+        except Exception:
+            details = output.getvalue() + traceback.format_exc()
+            self.app.call_from_thread(self._save_failed, details)
+            return
+        self.app.call_from_thread(self._save_done, errors, output.getvalue())
+
+    def _save_done(self, errors: int, output: str) -> None:
+        if errors:
+            self._set_saving(False)
+            details = output.strip() or f"Synchronization returned {errors} error(s)."
+            self.query_one("#plugin-settings-status", Static).update(details)
+            return
+        self.dismiss(True)
+
+    def _save_failed(self, details: str) -> None:
+        self._set_saving(False)
+        self.query_one("#plugin-settings-status", Static).update(details)
+
+    def action_cancel(self) -> None:
+        if self._saving:
+            self.query_one("#plugin-settings-status", Static).update(
+                "Synchronization is still running."
+            )
+            return
+        self.dismiss(False)
+
+
 class AgentsPane(TabPane):
     """Просмотр агентов. Enter открывает модалку с телом .md."""
 
@@ -232,17 +338,10 @@ class AgentsPane(TabPane):
 
 
 class PluginsPane(TabPane):
-    """Просмотр + toggle общих AI-плагинов ([[ai.plugins]]).
-
-    `t`/Space — toggle ЛОКАЛЬНО (config.local.toml, эта машина); `g` — ГЛОБАЛЬНО
-    (config.toml, для всех машин). Оба пересобирают seed + мержат settings. Enter
-    открывает plugin.json. 💡 — итоговый статус; «Гл»/«Лок» — глобально/локально
-    (— = локального оверрайда нет). ⚠ — SessionStart-хуки.
-    """
+    """Просмотр общих AI-плагинов. `g` открывает global/local настройки."""
 
     BINDINGS = [
-        Binding("space,t", "toggle_local", "Toggle (local)", show=True),
-        Binding("g", "toggle_global", "Toggle (global)", show=True),
+        Binding("g", "configure", "Configure", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -302,48 +401,16 @@ class PluginsPane(TabPane):
                 ContentScreen(p.ref, root / f".{platform}-plugin" / "plugin.json")
             )
 
-    def action_toggle_local(self) -> None:
+    def action_configure(self) -> None:
         p = self._at_cursor()
         if p is None:
             return
-        new_enabled = not p.enabled
-        config.set_plugin_enabled_local(p.source, enabled=new_enabled)
-        if not new_enabled:  # эффективно выключен → снять stale HUD-флаг
-            _clear_plugin_flag(p.plugin)
-        verb = "enabled" if new_enabled else "disabled"
-        self._status(f"{p.ref} {verb} locally — rebuilding seed…")
-        self._rebuild_worker(f"{p.ref} {verb} (local)")
+        self.app.push_screen(PluginSettingsScreen(p), self._settings_done)
 
-    def action_toggle_global(self) -> None:
-        p = self._at_cursor()
-        if p is None:
-            return
-        new_enabled = not p.enabled_base
-        config.set_plugin_enabled(p.source, enabled=new_enabled)
-        # Итог с учётом локального оверрайда: он маскирует глобальное значение.
-        effective = p.enabled_local if p.enabled_local is not None else new_enabled
-        if not effective:  # эффективно выключен → снять stale HUD-флаг
-            _clear_plugin_flag(p.plugin)
-        verb = "enabled" if new_enabled else "disabled"
-        masked = " (but local override active)" if p.enabled_local is not None else ""
-        self._status(f"{p.ref} {verb} globally{masked} — rebuilding seed…")
-        self._rebuild_worker(f"{p.ref} {verb} (global){masked}")
-
-    @work(thread=True, exclusive=True)
-    def _rebuild_worker(self, what: str) -> None:
-        # Полная пересборка: seed + settings (без сабмодулей, без loose-symlink-прунинга
-        # — он не нужен для plugin-toggle, но run_up дёшев и идемпотентен).
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            errors = run_up(skip_submodules=True, quiet=True)
-        self.app.call_from_thread(self._rebuild_done, what, errors)
-
-    def _rebuild_done(self, what: str, errors: int) -> None:
-        if errors:
-            self._status(f"{what}, but with warnings ({errors}). Restart clients.", warn=True)
-        else:
-            self._status(f"{what} ✓ Claude+Codex updated. Restart clients.")
+    def _settings_done(self, saved: bool | None) -> None:
         self._reload()
+        if saved:
+            self._status("Plugin settings saved ✓ Claude+Codex updated. Restart clients.")
 
 
 class McpPane(TabPane):
@@ -856,6 +923,18 @@ class ManagerApp(App):
     #modal-title { height: 1; padding: 0 1; background: $boost; }
     #modal-scroll { height: 1fr; padding: 0 1; }
     #modal-hint { height: 1; padding: 0 1; color: $text-muted; }
+    PluginSettingsScreen { align: center middle; }
+    #plugin-settings-box {
+        width: 68;
+        height: 24;
+        border: round $accent;
+        background: $surface;
+        padding: 0 1;
+    }
+    #plugin-settings-box Checkbox { width: 1fr; }
+    .plugin-settings-help { height: 2; color: $text-muted; padding: 0 1; }
+    #plugin-settings-output { height: 1fr; padding: 0 1; }
+    #plugin-settings-actions { height: 3; align-horizontal: right; }
     """
 
     BINDINGS = [

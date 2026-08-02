@@ -140,7 +140,7 @@ enabled = true
 # сам не ставит. Рантайм-deps плагина ставятся отдельно: bun install в plugin/.
 [[ai.plugins]]
 path = "contrib/claude-mem"
-enabled = true
+enabled = false
   [[ai.plugins.requirements]]
   name = "node>=20"
   check = "command -v node && node -e 'process.exit(+process.versions.node.split(\".\")[0]>=20?0:1)'"
