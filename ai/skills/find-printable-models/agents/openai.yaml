@@ -1,0 +1,4 @@
+interface:
+  display_name: "Find Printable Models"
+  short_description: "Search and compare practical 3D-printable models"
+  default_prompt: "Find suitable 3D-printable models for my requirements and compare the best candidates."
