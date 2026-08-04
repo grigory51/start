@@ -28,3 +28,6 @@
 [submodule "contrib/Understand-Anything"]
 	path = contrib/Understand-Anything
 	url = https://github.com/Egonex-AI/Understand-Anything
+[submodule "contrib/apple-bento-grid"]
+	path = contrib/apple-bento-grid
+	url = https://github.com/hubeiqiao/apple-bento-grid

@@ -786,6 +786,16 @@ def load_env() -> dict[str, str]:
     return {str(k): str(v) for k, v in env.items()}
 
 
+def load_codex_features() -> dict[str, bool]:
+    """`[ai.platforms.codex.features]` из config.toml."""
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    features = _ai(base).get("platforms", {}).get("codex", {}).get("features", {})
+    if not isinstance(features, dict):
+        return {}
+    return {str(key): value for key, value in features.items() if isinstance(value, bool)}
+
+
 def load_hooks(platform: str) -> tuple[list[dict], list[str]]:
     """Loose hooks enabled for a platform."""
     warnings: list[str] = []

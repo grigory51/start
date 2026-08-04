@@ -211,10 +211,10 @@ def _codex_mcp(server: config.McpServer) -> dict:
 
 
 def merge_config(ctx: Ctx) -> None:
-    """Merge owned MCP and native HUD fields into ~/.codex/config.toml."""
+    """Merge owned MCP, feature and native HUD fields into ~/.codex/config.toml."""
     target = codex_dir() / "config.toml"
     sidecar = codex_dir() / ".start-config-managed.json"
-    previous = _read_json(sidecar, {"mcp": [], "status_line": False})
+    previous = _read_json(sidecar, {"mcp": [], "features": [], "status_line": False})
     try:
         doc = tomlkit.parse(target.read_text()) if target.is_file() else tomlkit.document()
     except Exception as exc:
@@ -245,6 +245,20 @@ def merge_config(ctx: Ctx) -> None:
             mcp_table[name] = value
             changes.append(f"~mcp_servers.{name}")
 
+    features_table = doc.get("features")
+    if features_table is None:
+        features_table = tomlkit.table()
+        doc["features"] = features_table
+    wanted_features = config.load_codex_features()
+    for name in previous.get("features", []):
+        if name not in wanted_features and name in features_table:
+            del features_table[name]
+            changes.append(f"-features.{name}")
+    for name, value in wanted_features.items():
+        if features_table.get(name) != value:
+            features_table[name] = value
+            changes.append(f"~features.{name}")
+
     status = config.load_statusline("codex")
     tui = doc.get("tui")
     if tui is None:
@@ -264,7 +278,11 @@ def merge_config(ctx: Ctx) -> None:
                 del tui[key]
                 changes.append(f"-tui.{key}")
 
-    desired_sidecar = {"mcp": sorted(wanted), "status_line": bool(status)}
+    desired_sidecar = {
+        "mcp": sorted(wanted),
+        "features": sorted(wanted_features),
+        "status_line": bool(status),
+    }
     drift = desired_sidecar != previous
     if not changes and not drift:
         ctx.say("Codex config -> без изменений.")

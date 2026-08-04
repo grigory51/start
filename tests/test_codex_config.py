@@ -29,6 +29,10 @@ class CodexConfigTests(unittest.TestCase):
                 'model = "custom"\n'
                 '[tui]\nanimations = false\n'
                 '[mcp_servers.foreign]\ncommand = "foreign"\n'
+                '[features]\nforeign = true\nold_managed = true\n'
+            )
+            (codex_home / ".start-config-managed.json").write_text(
+                '{"mcp": [], "features": ["old_managed"], "status_line": false}\n'
             )
             status = {
                 "items": ["model-with-reasoning", "context-remaining"],
@@ -37,6 +41,7 @@ class CodexConfigTests(unittest.TestCase):
             with (
                 patch.dict(os.environ, {"HOME": str(home), "CODEX_HOME": str(codex_home)}),
                 patch.object(config, "load_mcp", return_value=([], [])),
+                patch.object(config, "load_codex_features", return_value={"apps": False}),
                 patch.object(config, "load_statusline", return_value=status),
             ):
                 codex.merge_config(Ctx(dry_run=False, force=False))
@@ -44,8 +49,12 @@ class CodexConfigTests(unittest.TestCase):
             self.assertEqual(merged["model"], "custom")
             self.assertFalse(merged["tui"]["animations"])
             self.assertEqual(merged["mcp_servers"]["foreign"]["command"], "foreign")
+            self.assertTrue(merged["features"]["foreign"])
+            self.assertFalse(merged["features"]["apps"])
+            self.assertNotIn("old_managed", merged["features"])
             self.assertEqual(merged["tui"]["status_line"], status["items"])
             sidecar = json.loads((codex_home / ".start-config-managed.json").read_text())
+            self.assertEqual(sidecar["features"], ["apps"])
             self.assertTrue(sidecar["status_line"])
 
 
