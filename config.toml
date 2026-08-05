@@ -57,15 +57,14 @@ enabled = ["*"]
 
 [[ai.skills]]
 path = "contrib/blender-skills"
-enabled = ["image-to-3d", "multi-image-to-3d", "threejs-export"]
-# exclude = ["threejs-export"]
+enabled = ["image-to-3d", "multi-image-to-3d", "polyhaven-scene-builder", "threejs-export"]
 
 # lottie — text-to-Lottie: генерация/правка Lottie/Bodymovin JSON под локальный
 # Skia Skottie player. Сабмодуль — full app (React/Vite); скилы лежат в skills/,
 # берём только text-to-lottie. Скил self-contained (references/ внутри папки).
 [[ai.skills]]
 path = "contrib/lottie/skills"
-enabled = ["text-to-lottie"]
+enabled = ["*"]
   # Скил рендерит/верифицирует сцены в официальном Skia Skottie player — это app
   # из того же сабмодуля (contrib/lottie), запускается через bun. Без bun плеер не
   # поднять, верификация сцен невозможна. Менеджер проверяет bun и подсказывает.
