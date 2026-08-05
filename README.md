@@ -89,6 +89,9 @@ uv run start add-submodule <git-url>
 `make manage`. Здесь живут обслуживание машины, локальный Ansible provisioning,
 PXE и диагностические scripts.
 
+Machine-only MCP и их секреты объявляются через `[[ai.mcp]]` в gitignored
+`config.local.toml`.
+
 ## Структура
 
 ```text

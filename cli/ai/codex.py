@@ -98,7 +98,7 @@ def install_skills(ctx: Ctx) -> None:
             ctx.errors += 1
     _managed_link_set(
         ctx,
-        "Навыки Codex",
+        "Навыки",
         agents_dir() / "skills",
         sources,
         agents_dir() / ".start-skills-managed.json",
@@ -165,7 +165,7 @@ def install_agents(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
 
     _managed_link_set(
         ctx,
-        f"Агенты Codex ({catalog_count} catalog + {companion_count} plugin companions)",
+        f"Агенты ({catalog_count} catalog + {companion_count} plugin companions)",
         codex_dir() / "agents",
         sources,
         codex_dir() / ".start-agents-managed.json",
@@ -222,7 +222,7 @@ def merge_config(ctx: Ctx) -> None:
         ctx.errors += 1
         return
 
-    changes: list[str] = []
+    mcp_changes: list[str] = []
     mcp_table = doc.get("mcp_servers")
     if mcp_table is None:
         mcp_table = tomlkit.table()
@@ -239,12 +239,13 @@ def merge_config(ctx: Ctx) -> None:
     for name in previous.get("mcp", []):
         if name not in wanted and name in mcp_table:
             del mcp_table[name]
-            changes.append(f"-mcp_servers.{name}")
+            mcp_changes.append(f"- {name}")
     for name, value in wanted.items():
         if mcp_table.get(name) != value:
             mcp_table[name] = value
-            changes.append(f"~mcp_servers.{name}")
+            mcp_changes.append(f"~ {name}")
 
+    config_changes: list[str] = []
     features_table = doc.get("features")
     if features_table is None:
         features_table = tomlkit.table()
@@ -253,11 +254,11 @@ def merge_config(ctx: Ctx) -> None:
     for name in previous.get("features", []):
         if name not in wanted_features and name in features_table:
             del features_table[name]
-            changes.append(f"-features.{name}")
+            config_changes.append(f"-features.{name}")
     for name, value in wanted_features.items():
         if features_table.get(name) != value:
             features_table[name] = value
-            changes.append(f"~features.{name}")
+            config_changes.append(f"~features.{name}")
 
     status = config.load_statusline("codex")
     tui = doc.get("tui")
@@ -267,16 +268,16 @@ def merge_config(ctx: Ctx) -> None:
     if status:
         if list(tui.get("status_line", [])) != status["items"]:
             tui["status_line"] = status["items"]
-            changes.append("~tui.status_line")
+            config_changes.append("~tui.status_line")
         if ("status_line_use_colors" not in tui
                 or bool(tui.get("status_line_use_colors")) != status["use_colors"]):
             tui["status_line_use_colors"] = status["use_colors"]
-            changes.append("~tui.status_line_use_colors")
+            config_changes.append("~tui.status_line_use_colors")
     elif previous.get("status_line"):
         for key in ("status_line", "status_line_use_colors"):
             if key in tui:
                 del tui[key]
-                changes.append(f"-tui.{key}")
+                config_changes.append(f"-tui.{key}")
 
     desired_sidecar = {
         "mcp": sorted(wanted),
@@ -284,13 +285,21 @@ def merge_config(ctx: Ctx) -> None:
         "status_line": bool(status),
     }
     drift = desired_sidecar != previous
+    changes = mcp_changes + config_changes
+    ctx.say(f"MCP -> {target}")
+    for change in mcp_changes:
+        ctx.say(f"  {change}")
+    ctx.say(f"  Итого: {len(wanted)}, изменено {len(mcp_changes)}.")
+    ctx.say()
+    if config_changes:
+        ctx.say(f"Config -> {target}")
+        for change in config_changes:
+            ctx.say(f"  {change}")
+    else:
+        ctx.say("Config -> без изменений.")
     if not changes and not drift:
-        ctx.say("Codex config -> без изменений.")
         ctx.say()
         return
-    ctx.say(f"Codex config -> {target}")
-    for change in changes:
-        ctx.say(f"  {change}")
     if ctx.dry_run:
         ctx.say("  [dry-run] config.toml не изменён")
         ctx.say()
@@ -340,7 +349,7 @@ def install_hooks(ctx: Ctx) -> None:
             )
     _managed_link_set(
         ctx,
-        "Hooks Codex",
+        "Hooks",
         hook_dir,
         sources,
         codex_dir() / ".start-hooks-files-managed.json",
@@ -377,7 +386,7 @@ def install_hooks(ctx: Ctx) -> None:
     else:
         current.pop("hooks", None)
     if ctx.dry_run:
-        ctx.say(f"Codex hooks config -> {target} [dry-run]")
+        ctx.say(f"Hooks config -> {target} [dry-run]")
         ctx.say()
         return
     _write_json(target, current)
@@ -487,7 +496,7 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
         )
         plugins.check_requirements(ctx, plugin.plugin, plugin.requirements)
 
-    ctx.say(f"Плагины Codex -> {marketplace}")
+    ctx.say(f"Плагины -> {marketplace}")
     if not ctx.dry_run:
         plugin_root.mkdir(parents=True, exist_ok=True)
     # Migration from the initial adapter implementation, which interpreted the

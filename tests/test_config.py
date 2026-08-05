@@ -71,6 +71,40 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(codex[0]["events"], ["Stop", "PermissionRequest"])
             self.assertEqual(claude_warnings + codex_warnings, [])
 
+    def test_local_mcp_extends_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            cfg = root / "config.toml"
+            cfg.write_text(
+                '[[ai.mcp]]\nname = "global"\nenabled = true\n'
+                '[ai.mcp.server]\ncommand = "global"\n'
+            )
+            local = root / "config.local.toml"
+            local.write_text(
+                '[[ai.mcp]]\nname = "monium_mcp"\nenabled = true\n'
+                '[ai.mcp.server]\ncommand = "ya"\n'
+                '[[ai.mcp]]\nname = "yandex_messenger"\nenabled = true\n'
+                '[ai.mcp.server]\nurl = "https://example.test/sse"\n'
+                'headers = { Authorization = "OAuth token" }\n'
+                '[local.ai.mcp]\nmonium_mcp = false\n'
+            )
+            with (
+                patch.object(config, "CONFIG", cfg),
+                patch.object(config, "CONFIG_LOCAL", local),
+            ):
+                servers, warnings = config.load_mcp()
+
+            by_name = {server.name: server for server in servers}
+            self.assertEqual(set(by_name), {"global", "monium_mcp", "yandex_messenger"})
+            self.assertFalse(by_name["monium_mcp"].enabled)
+            self.assertTrue(by_name["monium_mcp"].local_only)
+            self.assertFalse(by_name["monium_mcp"].enabled_local)
+            self.assertEqual(
+                by_name["yandex_messenger"].server["headers"]["Authorization"],
+                "OAuth token",
+            )
+            self.assertEqual(warnings, [])
+
 
 if __name__ == "__main__":
     unittest.main()

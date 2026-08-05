@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,7 +46,9 @@ class CodexConfigTests(unittest.TestCase):
                 patch.object(config, "load_codex_features", return_value={"apps": False}),
                 patch.object(config, "load_statusline", return_value=status),
             ):
-                codex.merge_config(Ctx(dry_run=False, force=False))
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    codex.merge_config(Ctx(dry_run=False, force=False))
             merged = tomllib.loads((codex_home / "config.toml").read_text())
             self.assertEqual(merged["model"], "custom")
             self.assertFalse(merged["tui"]["animations"])
@@ -56,6 +60,9 @@ class CodexConfigTests(unittest.TestCase):
             sidecar = json.loads((codex_home / ".start-config-managed.json").read_text())
             self.assertEqual(sidecar["features"], ["apps"])
             self.assertTrue(sidecar["status_line"])
+            self.assertIn("MCP ->", output.getvalue())
+            self.assertIn("Итого: 0, изменено 0.", output.getvalue())
+            self.assertNotIn("Codex config", output.getvalue())
 
 
 if __name__ == "__main__":

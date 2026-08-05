@@ -11,7 +11,8 @@
 #
 # Локальный overlay
 # -----------------
-# config.local.toml (gitignore) переопределяет `enabled` источников для ТЕКУЩЕЙ машины.
+# config.local.toml (gitignore) переопределяет `enabled` источников для ТЕКУЩЕЙ машины
+# и может добавлять machine-only MCP через собственные [[ai.mcp]].
 # Формат остаётся ПЛОСКИМ: [local.<section>] "<key>" = <enabled>, где section ∈ skills/
 # agents/commands/plugins/mcp; key — path источника (или name для mcp). Плоским намеренно:
 # overlay машино-локальный. Формат: [local.ai.<section>].
@@ -169,10 +170,9 @@ enabled = true
 # mcpServers) — CC читает MCP только оттуда, НЕ из settings.json. inline-спека
 # [ai.mcp.server] (command/args/env | url/headers); env ${VAR} как литерал.
 #   name     — имя сервера в ~/.claude.json.
-#   enabled  — bool. Машино-специфично включать через config.local.toml ([local.mcp]).
-#
-# monium_mcp — нужен только на рабочей машине (Аркадия). В git выключен; на нужной
-# машине включается: config.local.toml → [local.mcp] monium_mcp = true (или `t` в TUI).
+#   enabled  — bool. Машино-специфично переопределяется через
+#              config.local.toml ([local.ai.mcp]). Секретные и machine-only серверы
+#              целиком объявляются как [[ai.mcp]] в config.local.toml.
 [[ai.mcp]]
 name = "playwright"
 enabled = true
@@ -180,13 +180,6 @@ platforms = ["codex"]
 [ai.mcp.server]
 command = "npx"
 args = ["@playwright/mcp@latest"]
-
-[[ai.mcp]]
-name = "monium_mcp"
-enabled = false
-[ai.mcp.server]
-command = "ya"
-args = ["tool", "mcp", "connect", "mcp.yandex.net/ws?servers=monium_mcp"]
 
 # --- Env (переменные окружения в ~/.claude/settings.json) ---------------------
 #

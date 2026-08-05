@@ -121,6 +121,7 @@ class McpServer:
     enabled_base: bool = True
     enabled_local: bool | None = None
     platforms: tuple[str, ...] = ("claude", "codex")
+    local_only: bool = False
 
 
 @dataclass
@@ -315,7 +316,8 @@ def _load_local(warnings: list[str]) -> dict:
     """Секция [local.ai] из config.local.toml ({} если файла нет).
 
     Формат: [local.<section>] <key> = <enabled>. section ∈ skills/agents/commands/
-    plugins/mcp. key — path источника (или name для mcp). Только переопределяет enabled.
+    plugins/mcp. key — path источника (или name для mcp). Переопределяет enabled;
+    machine-only MCP-источники объявляются отдельно через [[ai.mcp]] в том же файле.
     """
     doc = _load_doc(CONFIG_LOCAL, warnings)
     local = doc.get("local", {})
@@ -888,40 +890,59 @@ def load_tasks() -> tuple[list[Task], list[str]]:
 
 
 def load_mcp() -> tuple[list[McpServer], list[str]]:
-    """MCP-серверы из [[mcp]] config.toml + warnings.
+    """MCP-серверы из [[ai.mcp]] config.toml и config.local.toml + warnings.
 
-    [[mcp]] — name-keyed (не path), поэтому отдельный ридер. Каждая запись:
+    [[ai.mcp]] — name-keyed (не path), поэтому отдельный ридер. Каждая запись:
     name (обяз.), enabled (bool, дефолт True), source (.mcp.json для symlink) либо
-    inline [mcp.server]. Дубль name → warning.
+    inline [ai.mcp.server]. Локальный файл расширяет каталог; дубль name → warning.
     """
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
     _legacy_schema_warning(base, warnings)
-    lsec = _load_local(warnings).get("mcp", {})
+    local_doc = _load_doc(CONFIG_LOCAL, warnings)
+    local = local_doc.get("local", {})
+    local_ai = local.get("ai", {}) if isinstance(local, dict) else {}
+    lsec = local_ai.get("mcp", {}) if isinstance(local_ai, dict) else {}
+    if not isinstance(lsec, dict):
+        lsec = {}
 
     seen: dict[str, McpServer] = {}
-    for entry in _ai(base).get("mcp", []):
-        name = (entry.get("name") or "").strip()
-        if not name:
-            warnings.append(f"[[mcp]] без name в {CONFIG.name} — пропуск")
+    for doc, filename, local_only in (
+        (base, CONFIG.name, False),
+        (local_doc, CONFIG_LOCAL.name, True),
+    ):
+        entries = _ai(doc).get("mcp", [])
+        if not isinstance(entries, list):
+            warnings.append(f"[[ai.mcp]] в {filename} должен быть списком — пропуск")
             continue
-        if name in seen:
-            warnings.append(f"дубль MCP '{name}' в {CONFIG.name} — пропуск")
-            continue
-        server = entry.get("server")
-        seen[name] = McpServer(
-            name=name,
-            enabled=_effective_bool(lsec, name, entry),
-            source=(entry.get("source") or "").strip(),
-            server=server if isinstance(server, dict) else None,
-            enabled_base=_bool_enabled(entry),
-            enabled_local=(_bool_enabled({"enabled": lsec[name]}) if name in lsec else None),
-            platforms=_platforms(entry, name, warnings),
-        )
-    # Локальные ключи без base-источника — overlay не определяет источники.
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                warnings.append(f"[[ai.mcp]] без name в {filename} — пропуск")
+                continue
+            if name in seen:
+                warnings.append(f"дубль MCP '{name}' в {filename} — пропуск")
+                continue
+            server = entry.get("server")
+            enabled_local = (
+                _effective_bool(lsec, name, entry) if local_only
+                else (_bool_enabled({"enabled": lsec[name]}) if name in lsec else None)
+            )
+            seen[name] = McpServer(
+                name=name,
+                enabled=_effective_bool(lsec, name, entry),
+                source=str(entry.get("source") or "").strip(),
+                server=server if isinstance(server, dict) else None,
+                enabled_base=False if local_only else _bool_enabled(entry),
+                enabled_local=enabled_local,
+                platforms=_platforms(entry, name, warnings),
+                local_only=local_only,
+            )
     for n in lsec:
         if n not in seen:
-            warnings.append(f"config.local.toml [local.mcp]: '{n}' нет в config.toml — игнор")
+            warnings.append(f"config.local.toml [local.ai.mcp]: '{n}' не объявлен — игнор")
     return list(seen.values()), warnings
 
 

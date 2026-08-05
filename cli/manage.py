@@ -452,6 +452,8 @@ class McpPane(TabPane):
         mcp, _ = config.load_mcp()
         for m in mcp:
             lamp, g, loc = _state_cells(m.enabled, m.enabled_base, m.enabled_local)
+            if m.local_only:
+                g = "[dim]—[/]"
             name = m.name if m.enabled else f"[dim]{m.name}[/]"
             srv = m.server or {}
             desc = srv.get("command", "") and (srv["command"] + " " + " ".join(srv.get("args", [])))
@@ -490,6 +492,9 @@ class McpPane(TabPane):
     def _toggle(self, *, local: bool) -> None:
         m = self._at_cursor()
         if m is None:
+            return
+        if not local and m.local_only:
+            self._status(f"{m.name} задан только в config.local.toml", warn=True)
             return
         if local:
             new_enabled = not m.enabled
