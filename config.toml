@@ -239,7 +239,7 @@ use_colors = true
 # Файлы хранить в dotfiles/ (без ведущей точки — точка в target).
 [[ai.hooks]]
 path = "ai/hooks/notify.sh"
-events = { claude = ["Stop", "Notification"], codex = ["Stop", "PermissionRequest"] }
+events = { claude = ["Stop", "Notification"], codex = ["Stop"] }
 
 [[ai.hooks]]
 path = "ai/hooks/focus-track.sh"

@@ -20,13 +20,12 @@ platform="${START_AI_PLATFORM:-}"
 event="${START_AI_EVENT:-}"
 
 # Поля payload различаются между платформами, общие поля читаются первыми.
-ntype=""; message=""; cwd=""; transcript_path=""
+ntype=""; message=""; cwd=""
 if command -v jq >/dev/null 2>&1 && [ -n "$payload" ]; then
   [ -n "$event" ] || event="$(printf '%s' "$payload" | jq -r '.hook_event_name // empty' 2>/dev/null)"
   ntype="$(printf '%s'   "$payload" | jq -r '.notification_type // empty' 2>/dev/null)"
   message="$(printf '%s' "$payload" | jq -r '.message // .tool_input.description // empty' 2>/dev/null)"
   cwd="$(printf '%s'     "$payload" | jq -r '.cwd // empty' 2>/dev/null)"
-  transcript_path="$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)"
   if [ -z "$platform" ]; then
     if printf '%s' "$payload" | jq -e 'has("turn_id") or has("model")' >/dev/null 2>&1; then
       platform="codex"
@@ -36,9 +35,9 @@ if command -v jq >/dev/null 2>&1 && [ -n "$payload" ]; then
   fi
 fi
 
-# Hooks сабагента получают session_id родителя, поэтому источник читается из его transcript.
-if [ "$platform" = "codex" ] && [ "$event" = "PermissionRequest" ] && [ -r "$transcript_path" ] &&
-  head -n 1 "$transcript_path" | jq -e '.type == "session_meta" and .payload.thread_source == "subagent"' >/dev/null 2>&1; then
+# PermissionRequest срабатывает до auto-review и не содержит его результат.
+# Уведомление поэтому всегда преждевременно и не означает, что нужен ввод пользователя.
+if [ "$platform" = "codex" ] && [ "$event" = "PermissionRequest" ]; then
   exit 0
 fi
 

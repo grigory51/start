@@ -59,7 +59,7 @@ class ConfigTests(unittest.TestCase):
             cfg.write_text(
                 '[[ai.hooks]]\npath = "ai/hooks/notify.sh"\n'
                 'events = { claude = ["Stop", "Notification"], '
-                'codex = ["Stop", "PermissionRequest"] }\n'
+                'codex = ["Stop"] }\n'
             )
             with (
                 patch.object(config, "CONFIG", cfg),
@@ -68,7 +68,7 @@ class ConfigTests(unittest.TestCase):
                 claude, claude_warnings = config.load_hooks("claude")
                 codex, codex_warnings = config.load_hooks("codex")
             self.assertEqual(claude[0]["events"], ["Stop", "Notification"])
-            self.assertEqual(codex[0]["events"], ["Stop", "PermissionRequest"])
+            self.assertEqual(codex[0]["events"], ["Stop"])
             self.assertEqual(claude_warnings + codex_warnings, [])
 
     def test_local_mcp_extends_catalog(self) -> None:
