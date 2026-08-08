@@ -31,3 +31,21 @@
 [submodule "contrib/apple-bento-grid"]
 	path = contrib/apple-bento-grid
 	url = https://github.com/hubeiqiao/apple-bento-grid
+[submodule "contrib/impeccable"]
+	path = contrib/impeccable
+	url = https://github.com/pbakaus/impeccable
+[submodule "contrib/openai-plugins"]
+	path = contrib/openai-plugins
+	url = https://github.com/openai/plugins
+[submodule "contrib/swiftui-agent-skill"]
+	path = contrib/swiftui-agent-skill
+	url = https://github.com/twostraws/SwiftUI-Agent-Skill
+[submodule "contrib/swift-concurrency-agent-skill"]
+	path = contrib/swift-concurrency-agent-skill
+	url = https://github.com/twostraws/Swift-Concurrency-Agent-Skill
+[submodule "contrib/swift-testing-agent-skill"]
+	path = contrib/swift-testing-agent-skill
+	url = https://github.com/twostraws/Swift-Testing-Agent-Skill
+[submodule "contrib/swiftdata-agent-skill"]
+	path = contrib/swiftdata-agent-skill
+	url = https://github.com/twostraws/SwiftData-Agent-Skill

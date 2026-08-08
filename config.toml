@@ -73,6 +73,11 @@ enabled = ["*"]
   check = "command -v bun"
   hint = "curl -fsSL https://bun.sh/install | bash  (или brew install oven-sh/bun/bun). Затем плеер: cd contrib/lottie && bun install && bun dev"
 
+# Один универсальный frontend-design skill без plugin hooks и companion agents.
+[[ai.skills]]
+path = "contrib/impeccable/.agents/skills"
+enabled = ["impeccable"]
+
 # --- Агенты -------------------------------------------------------------------
 #
 # Каждый источник агентов — отдельный [[ai.agents]] (репо + сабмодули). path → папка
@@ -83,7 +88,7 @@ enabled = ["*"]
 
 [[ai.agents]]
 path = "ai/agents"
-enabled = ["*"]
+enabled = ["architect", "designer", "programmer", "reviewer", "tech-writer"]
 
 # --- Плагины (нативные CC) ----------------------------------------------------
 #
@@ -337,3 +342,24 @@ linux = 'python3 "$REPO/scripts/codex-session-dump.py"'
 [[ai.plugins]]
 path = "contrib/apple-bento-grid"
 enabled = true
+
+[[ai.plugins]]
+path = "contrib/openai-plugins/plugins/build-ios-apps"
+enabled = false
+platforms = ["codex"]
+
+[[ai.plugins]]
+path = "contrib/swiftui-agent-skill"
+enabled = false
+
+[[ai.plugins]]
+path = "contrib/swift-concurrency-agent-skill"
+enabled = false
+
+[[ai.plugins]]
+path = "contrib/swift-testing-agent-skill"
+enabled = false
+
+[[ai.skills]]
+path = "contrib/swiftdata-agent-skill"
+enabled = []

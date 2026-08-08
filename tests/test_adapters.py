@@ -56,6 +56,8 @@ class AdapterTests(unittest.TestCase):
                 "description: Writes code\n"
                 "tools: Read, Write, Edit\n"
                 "model: sonnet\n"
+                "codex_model: gpt-5.6-terra\n"
+                "codex_reasoning_effort: medium\n"
                 "skills:\n"
                 "  - my-principles\n"
                 "---\n\n"
@@ -65,7 +67,8 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(rendered["name"], "programmer")
             self.assertEqual(rendered["sandbox_mode"], "workspace-write")
             self.assertIn("my-principles", rendered["developer_instructions"])
-            self.assertNotIn("model", rendered)
+            self.assertEqual(rendered["model"], "gpt-5.6-terra")
+            self.assertEqual(rendered["model_reasoning_effort"], "medium")
 
     def test_read_only_agent_stays_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

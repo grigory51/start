@@ -175,7 +175,7 @@ def render_codex_agent(source: Path) -> str:
     skills = meta.get("skills")
     if isinstance(skills, list) and skills:
         names = ", ".join(str(item) for item in skills)
-        instructions += f"\n\nПеред работой используй доступные навыки: {names}."
+        instructions += f"\n\nПо задаче используй релевантные доступные навыки из набора: {names}."
 
     tools = str(meta.get("tools") or "")
     is_orchestrator = "Agent(" in tools
@@ -186,6 +186,12 @@ def render_codex_agent(source: Path) -> str:
     doc["description"] = description
     doc["developer_instructions"] = tomlkit.string(instructions, multiline=True)
     doc["sandbox_mode"] = "workspace-write" if can_write else "read-only"
+    codex_model = str(meta.get("codex_model") or "").strip()
+    codex_reasoning_effort = str(meta.get("codex_reasoning_effort") or "").strip()
+    if codex_model:
+        doc["model"] = codex_model
+    if codex_reasoning_effort:
+        doc["model_reasoning_effort"] = codex_reasoning_effort
     return tomlkit.dumps(doc)
 
 
