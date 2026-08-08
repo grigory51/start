@@ -49,3 +49,6 @@
 [submodule "contrib/swiftdata-agent-skill"]
 	path = contrib/swiftdata-agent-skill
 	url = https://github.com/twostraws/SwiftData-Agent-Skill
+[submodule "contrib/diataxis-agent-skill"]
+	path = contrib/diataxis-agent-skill
+	url = https://github.com/keithpatton/diataxis-agent-skill
