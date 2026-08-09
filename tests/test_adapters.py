@@ -147,6 +147,49 @@ class AdapterTests(unittest.TestCase):
             self.assertIn("${PLUGIN_ROOT}/scripts/start-hook-adapter.py", command)
             self.assertEqual(adapters.validate_generated_plugin(generated), [])
 
+    def test_native_codex_plugin_excludes_invalid_undeclared_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            plugin_root = root / "cad"
+            (plugin_root / ".codex-plugin").mkdir(parents=True)
+            (plugin_root / ".codex-plugin" / "plugin.json").write_text(
+                json.dumps(
+                    {
+                        "name": "cad",
+                        "description": "CAD",
+                        "skills": "./skills/",
+                    }
+                )
+            )
+            declared = plugin_root / "skills" / "cad"
+            declared.mkdir(parents=True)
+            (declared / "SKILL.md").write_text(
+                "---\nname: cad\ndescription: CAD\n---\n\n# CAD\n"
+            )
+            undeclared = plugin_root / "viewer" / "skills" / "smui"
+            undeclared.mkdir(parents=True)
+            (undeclared / "SKILL.md").write_text("# smui\n")
+            plugin = config.Plugin(
+                name="cad",
+                path=plugin_root,
+                source="cad",
+                marketplace="personal",
+                plugin="cad",
+                enabled=True,
+                description="CAD",
+                native_platforms=("codex",),
+                platform_paths={"codex": plugin_root},
+            )
+
+            with patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}):
+                generated = adapters.codex_plugin(plugin)
+
+            self.assertTrue((generated / "skills" / "cad" / "SKILL.md").is_file())
+            self.assertFalse(
+                (generated / "viewer" / "skills" / "smui" / "SKILL.md").exists()
+            )
+            self.assertTrue((undeclared / "SKILL.md").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

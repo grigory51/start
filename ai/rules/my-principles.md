@@ -1,6 +1,6 @@
 ---
 name: my-principles
-description: Личные инженерные принципы, стиль, подходы и предпочтения владельца. Загружается во всех персональных агентов (architect, cad-engineer, programmer, reviewer, designer, ios-developer, tech-writer), чтобы их работа отражала единый стиль. Применяй при проектировании, написании, ревью и документировании кода.
+description: Личные инженерные принципы, стиль, подходы и предпочтения владельца. Загружается во всех персональных агентов (architect, cad-engineer, noc-engineer, programmer, reviewer, designer, ios-developer, tech-writer), чтобы их работа отражала единый стиль. Применяй при проектировании, написании, ревью и документировании кода.
 ---
 
 # Мои инженерные принципы
@@ -40,6 +40,7 @@ description: Личные инженерные принципы, стиль, п�
 - [Frontend](tech/frontend.md) — **TypeScript**, React, Vite/Next, Three.js/Babylon, Monaco, gravity, **UI/UX-критика**.
 - [iOS](tech/ios.md) — Swift 6, SwiftUI/UIKit, concurrency, Xcode, testing, HIG и accessibility.
 - [CAD](tech/cad.md) — parametric CAD, mechanical design, DFM, допуски, сборки и производственный handoff.
+- [Сети](tech/network.md) — NOC, routing/switching, vendor-specific automation, диагностика и безопасные изменения.
 - [Инфра](tech/infra.md) — Docker/compose, Tilt, serverless (Yandex Cloud), Arc.
 - [Наблюдаемость](tech/observability.md) — OpenTelemetry напрямую.
 

@@ -420,7 +420,34 @@ def generate_codex_plugin(plugin: config.Plugin) -> Path:
 
 def codex_plugin(plugin: config.Plugin) -> Path:
     native = plugin.platform_paths.get("codex")
-    return native if native else generate_codex_plugin(plugin)
+    if not native:
+        return generate_codex_plugin(plugin)
+
+    declared = {
+        (skill / "SKILL.md").resolve()
+        for skill in _skill_roots(native, "codex")
+    }
+    invalid_undeclared: list[Path] = []
+    for skill_file in native.rglob("SKILL.md"):
+        if skill_file.resolve() in declared:
+            continue
+        try:
+            normalized_skill_text(skill_file)
+        except AdapterError:
+            invalid_undeclared.append(skill_file)
+
+    if not invalid_undeclared:
+        return native
+
+    destination = data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
+    staged = destination.with_name(destination.name + ".next")
+    if staged.exists():
+        shutil.rmtree(staged)
+    shutil.copytree(native, staged, symlinks=True)
+    for skill_file in invalid_undeclared:
+        (staged / skill_file.relative_to(native)).unlink()
+    _replace_dir(staged, destination)
+    return destination
 
 
 def plugin_agents(plugin: config.Plugin, platform: str) -> list[Path]:

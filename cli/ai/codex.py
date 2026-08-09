@@ -455,9 +455,7 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
         if not plugin.enabled or not adapters.supports(plugin, "codex"):
             continue
         try:
-            if "codex" in plugin.native_platforms:
-                source = plugin.platform_paths["codex"]
-            elif ctx.dry_run:
+            if ctx.dry_run and "codex" not in plugin.native_platforms:
                 source_root = plugin.platform_paths.get("claude", plugin.path)
                 for skill in adapters._skill_roots(source_root, "claude"):
                     adapters.normalized_skill_text(skill / "SKILL.md")
@@ -468,6 +466,8 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
                     / "plugins"
                     / plugin.plugin
                 )
+            elif ctx.dry_run:
+                source = plugin.platform_paths["codex"]
             else:
                 source = adapters.codex_plugin(plugin)
             if "codex" not in plugin.native_platforms and not ctx.dry_run:

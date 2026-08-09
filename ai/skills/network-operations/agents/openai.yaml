@@ -1,0 +1,4 @@
+interface:
+  display_name: "Network Operations"
+  short_description: "Диагностика и безопасная эксплуатация сетей"
+  default_prompt: "Используй $network-operations, чтобы диагностировать сетевой инцидент и подготовить безопасный план проверки."
