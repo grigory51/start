@@ -88,7 +88,7 @@ enabled = ["impeccable"]
 
 [[ai.agents]]
 path = "ai/agents"
-enabled = ["architect", "designer", "programmer", "reviewer", "tech-writer"]
+enabled = ["architect", "cad-engineer", "designer", "programmer", "reviewer", "tech-writer"]
 
 # --- Плагины (нативные CC) ----------------------------------------------------
 #

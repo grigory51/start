@@ -1,6 +1,6 @@
 ---
 name: my-principles
-description: Личные инженерные принципы, стиль, подходы и предпочтения владельца. Загружается во всех персональных агентов (architect, programmer, reviewer, designer, ios-developer, tech-writer), чтобы их работа отражала единый стиль. Применяй при проектировании, написании, ревью и документировании кода.
+description: Личные инженерные принципы, стиль, подходы и предпочтения владельца. Загружается во всех персональных агентов (architect, cad-engineer, programmer, reviewer, designer, ios-developer, tech-writer), чтобы их работа отражала единый стиль. Применяй при проектировании, написании, ревью и документировании кода.
 ---
 
 # Мои инженерные принципы
@@ -39,6 +39,7 @@ description: Личные инженерные принципы, стиль, п�
 - [Python](tech/python.md) — 3.12+, `uv`, Pydantic v2, FastAPI/asyncio, `click`, типизация.
 - [Frontend](tech/frontend.md) — **TypeScript**, React, Vite/Next, Three.js/Babylon, Monaco, gravity, **UI/UX-критика**.
 - [iOS](tech/ios.md) — Swift 6, SwiftUI/UIKit, concurrency, Xcode, testing, HIG и accessibility.
+- [CAD](tech/cad.md) — parametric CAD, mechanical design, DFM, допуски, сборки и производственный handoff.
 - [Инфра](tech/infra.md) — Docker/compose, Tilt, serverless (Yandex Cloud), Arc.
 - [Наблюдаемость](tech/observability.md) — OpenTelemetry напрямую.
 
