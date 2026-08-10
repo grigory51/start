@@ -78,6 +78,10 @@ enabled = ["*"]
 path = "contrib/impeccable/.agents/skills"
 enabled = ["impeccable"]
 
+[[ai.skills]]
+path = "contrib/threejs-game-skills/skills"
+enabled = ["threejs-gameplay-systems", "threejs-debug-profiler", "threejs-qa-release"]
+
 # --- Агенты -------------------------------------------------------------------
 #
 # Каждый источник агентов — отдельный [[ai.agents]] (репо + сабмодули). path → папка
@@ -88,7 +92,7 @@ enabled = ["impeccable"]
 
 [[ai.agents]]
 path = "ai/agents"
-enabled = ["architect", "cad-engineer", "designer", "noc-engineer", "programmer", "reviewer", "tech-writer"]
+enabled = ["architect", "cad-engineer", "designer", "gamedev-engineer", "noc-engineer", "programmer", "reviewer", "tech-writer"]
 
 # --- Плагины (нативные CC) ----------------------------------------------------
 #
@@ -158,6 +162,11 @@ enabled = false
 [[ai.plugins]]
 path = "contrib/Understand-Anything"
 enabled = true
+
+[[ai.plugins]]
+path = "contrib/openai-plugins/plugins/game-studio"
+enabled = true
+platforms = ["codex"]
 
 # --- Slash-команды ------------------------------------------------------------
 #

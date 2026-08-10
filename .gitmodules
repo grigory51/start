@@ -52,3 +52,6 @@
 [submodule "contrib/diataxis-agent-skill"]
 	path = contrib/diataxis-agent-skill
 	url = https://github.com/keithpatton/diataxis-agent-skill
+[submodule "contrib/threejs-game-skills"]
+	path = contrib/threejs-game-skills
+	url = https://github.com/majidmanzarpour/threejs-game-skills

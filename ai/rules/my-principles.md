@@ -38,6 +38,7 @@ description: Личные инженерные принципы, стиль, п�
 
 - [Python](tech/python.md) — 3.12+, `uv`, Pydantic v2, FastAPI/asyncio, `click`, типизация.
 - [Frontend](tech/frontend.md) — **TypeScript**, React, Vite/Next, Three.js/Babylon, Monaco, gravity, **UI/UX-критика**.
+- [Gamedev](tech/gamedev.md) — браузерные 2D/3D игры, gameplay architecture, rendering, physics, assets и playtesting.
 - [iOS](tech/ios.md) — Swift 6, SwiftUI/UIKit, concurrency, Xcode, testing, HIG и accessibility.
 - [CAD](tech/cad.md) — parametric CAD, mechanical design, DFM, допуски, сборки и производственный handoff.
 - [Сети](tech/network.md) — NOC, routing/switching, vendor-specific automation, диагностика и безопасные изменения.
