@@ -79,6 +79,10 @@ path = "contrib/impeccable/.agents/skills"
 enabled = ["impeccable"]
 
 [[ai.skills]]
+path = "contrib/gravity-ui-skills/skills"
+enabled = ["gravity-ui"]
+
+[[ai.skills]]
 path = "contrib/threejs-game-skills/skills"
 enabled = ["threejs-gameplay-systems", "threejs-debug-profiler", "threejs-qa-release"]
 

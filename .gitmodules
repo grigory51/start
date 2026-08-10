@@ -55,3 +55,6 @@
 [submodule "contrib/threejs-game-skills"]
 	path = contrib/threejs-game-skills
 	url = https://github.com/majidmanzarpour/threejs-game-skills
+[submodule "contrib/gravity-ui-skills"]
+	path = contrib/gravity-ui-skills
+	url = https://github.com/gravity-ui/skills
