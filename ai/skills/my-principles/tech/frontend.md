@@ -10,6 +10,9 @@
 - **3D: Three.js / Babylon.js.**
 - **Редактор конфигов в UI: MonacoEditor.**
 - **UI-кит: gravity.** *(контекст конкретного проекта — не универсальный закон.)*
+- **Lockfile принадлежит package manager.** После изменения зависимостей запускай штатную команду (`npm install`,
+  `pnpm install`, `yarn install`) и принимай сгенерированный diff. Не редактируй и не читай lockfile вручную, если
+  пользователь не попросил диагностировать конкретную проблему с dependency resolution.
 
 ## TypeScript
 
