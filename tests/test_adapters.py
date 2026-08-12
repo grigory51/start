@@ -47,6 +47,101 @@ class AdapterTests(unittest.TestCase):
             self.assertFalse((rendered / "SKILL.md").is_symlink())
             self.assertIn("description: \"Demo\"", (rendered / "SKILL.md").read_text())
 
+    def test_codex_skill_links_contents_to_source(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            skill_root = root / "skills" / "demo"
+            references = skill_root / "references"
+            references.mkdir(parents=True)
+            (skill_root / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: Demo\nargument-hint: ignored\n---\n\nDo it.\n"
+            )
+            (references / "guide.md").write_text("Original\n")
+            skill = config.Skill(
+                name="demo",
+                path=skill_root,
+                source="skills",
+                enabled=True,
+            )
+
+            with patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}):
+                rendered = adapters.codex_skill(skill)
+
+            self.assertFalse((rendered / "SKILL.md").is_symlink())
+            self.assertNotIn("argument-hint", (rendered / "SKILL.md").read_text())
+            self.assertTrue((rendered / "references").is_symlink())
+            (rendered / "references" / "guide.md").write_text("Changed\n")
+            self.assertEqual((references / "guide.md").read_text(), "Changed\n")
+
+    def test_codex_skill_links_compatible_frontmatter_to_source(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            skill_root = root / "skills" / "demo"
+            skill_root.mkdir(parents=True)
+            source = skill_root / "SKILL.md"
+            source.write_text('---\nname: demo\ndescription: "Demo"\n---\n\nOriginal\n')
+            skill = config.Skill(
+                name="demo",
+                path=skill_root,
+                source="skills",
+                enabled=True,
+            )
+
+            with patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}):
+                rendered = adapters.codex_skill(skill)
+
+            self.assertTrue((rendered / "SKILL.md").is_symlink())
+            (rendered / "SKILL.md").write_text(
+                '---\nname: demo\ndescription: "Demo"\n---\n\nChanged\n'
+            )
+            self.assertIn("Changed", source.read_text())
+
+    def test_codex_skill_normalizes_invalid_plain_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            skill_root = root / "skills" / "demo"
+            skill_root.mkdir(parents=True)
+            (skill_root / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: Has a colon: and remains valid\n---\n\nDo it.\n"
+            )
+            skill = config.Skill(
+                name="demo",
+                path=skill_root,
+                source="skills",
+                enabled=True,
+            )
+
+            with patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}):
+                rendered = adapters.codex_skill(skill)
+
+            self.assertFalse((rendered / "SKILL.md").is_symlink())
+            self.assertIn(
+                'description: "Has a colon: and remains valid"',
+                (rendered / "SKILL.md").read_text(),
+            )
+
+    def test_codex_skill_rejects_extra_links_into_source(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            skill_root = root / "skills" / "demo"
+            (skill_root / "references").mkdir(parents=True)
+            (skill_root / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: Demo\n---\n\nDo it.\n"
+            )
+            skill = config.Skill(
+                name="demo",
+                path=skill_root,
+                source="skills",
+                enabled=True,
+                symlinks=[{"source": "shared", "destination": "references/extra"}],
+            )
+
+            with (
+                patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}),
+                self.assertRaises(adapters.AdapterError),
+            ):
+                adapters.codex_skill(skill)
+
     def test_markdown_agent_becomes_codex_toml(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             source = Path(raw) / "programmer.md"
@@ -101,6 +196,7 @@ class AdapterTests(unittest.TestCase):
                 "---\nname: demo-skill\ndescription: Demo skill\n"
                 "argument-hint: x\n---\n\nDo it.\n"
             )
+            (skill / "reference.md").write_text("Reference\n")
             hooks = plugin_root / "hooks"
             hooks.mkdir()
             (hooks / "hooks.json").write_text(
@@ -140,6 +236,9 @@ class AdapterTests(unittest.TestCase):
             self.assertNotIn("hooks", manifest)
             normalized = (generated / "skills" / "demo-skill" / "SKILL.md").read_text()
             self.assertNotIn("argument-hint", normalized)
+            self.assertFalse(
+                (generated / "skills" / "demo-skill" / "reference.md").is_symlink()
+            )
             generated_hooks = json.loads(
                 (generated / "hooks" / "hooks.json").read_text()
             )

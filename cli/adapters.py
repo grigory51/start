@@ -139,20 +139,62 @@ def materialize_skill(source: Path, destination: Path) -> Path:
 
 
 def codex_skill(skill: config.Skill) -> Path:
-    destination = materialize_skill(
-        skill.path,
-        data_dir() / "generated" / "codex" / "skills" / skill.name,
-    )
+    destination = data_dir() / "generated" / "codex" / "skills" / skill.name
+    staged = destination.with_name(destination.name + ".next")
+    if staged.exists() or staged.is_symlink():
+        if staged.is_dir() and not staged.is_symlink():
+            shutil.rmtree(staged)
+        else:
+            staged.unlink()
+
+    source_entries = {source.name: source for source in skill.path.iterdir()}
+    extra_destinations: list[Path] = []
     for item in skill.symlinks:
+        extra = Path(item["destination"])
+        if (
+            extra.is_absolute()
+            or not extra.parts
+            or any(part in (".", "..") for part in extra.parts)
+        ):
+            raise AdapterError(
+                f"{skill.name}/{extra}: destination должен быть относительным путём "
+                "внутри скила"
+            )
+        if extra.parts[0] in source_entries:
+            raise AdapterError(
+                f"{skill.name}/{extra}: [[ai.skills.symlinks]] перекрывает родную "
+                "запись скила"
+            )
+        if any(
+            extra == existing
+            or extra in existing.parents
+            or existing in extra.parents
+            for existing in extra_destinations
+        ):
+            raise AdapterError(
+                f"{skill.name}/{extra}: [[ai.skills.symlinks]] содержит "
+                "пересекающиеся destination"
+            )
+        extra_destinations.append(extra)
+
+    staged.mkdir(parents=True)
+    skill_file = skill.path / "SKILL.md"
+    skill_text = skill_file.read_text(errors="replace")
+    normalized = normalized_skill_text(skill_file)
+    if skill_text == normalized:
+        (staged / "SKILL.md").symlink_to(skill_file)
+    else:
+        (staged / "SKILL.md").write_text(normalized)
+    for source in skill.path.iterdir():
+        if source.name == "SKILL.md":
+            continue
+        (staged / source.name).symlink_to(source)
+    for item, extra in zip(skill.symlinks, extra_destinations, strict=True):
         source = (config.REPO_DIR / item["source"]).resolve()
-        target = destination / item["destination"]
+        target = staged / extra
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists() or target.is_symlink():
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target)
-            else:
-                target.unlink()
         target.symlink_to(source)
+    _replace_dir(staged, destination)
     return destination
 
 

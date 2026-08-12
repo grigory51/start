@@ -1,6 +1,6 @@
 ---
 name: network-operations
-description: Диагностика, эксплуатация и безопасное изменение корпоративных сетей. Используй для NOC-инцидентов, анализа конфигураций и телеметрии, routing/switching, BGP/OSPF/IS-IS, MPLS, EVPN/VXLAN, STP/LAG, DNS/DHCP/NAT/VPN, packet capture, производительности и vendor-specific работы с Cisco IOS/IOS XE/NX-OS, Juniper Junos, Huawei VRP и MikroTik RouterOS.
+description: "Диагностика, эксплуатация и безопасное изменение корпоративных сетей. Используй для NOC-инцидентов, анализа конфигураций и телеметрии, routing/switching, BGP/OSPF/IS-IS, MPLS, EVPN/VXLAN, STP/LAG, DNS/DHCP/NAT/VPN, packet capture, производительности и vendor-specific работы с Cisco IOS/IOS XE/NX-OS, Juniper Junos, Huawei VRP и MikroTik RouterOS."
 ---
 
 # Network Operations
