@@ -37,6 +37,7 @@ description: "Личные инженерные принципы, стиль, п
 Стек-специфика вынесена в `~/.claude/skills/my-principles/tech/` — по файлу на технологию. Здесь общий стиль; там — инструменты, версии, идиомы, анти-паттерны конкретной технологии. **При работе с технологией читай соответствующий файл через Read по абсолютному пути выше** (относительные ссылки ниже указывают на тот же каталог, но резолвятся лишь когда файл открыт как скилл). Расширяй список, добавляя новый файл по образцу существующих.
 
 - [Python](tech/python.md) — 3.12+, `uv`, Pydantic v2, FastAPI/asyncio, `click`, типизация.
+- [Go](tech/go.md) — `cobra` для CLI, `context`, явная обработка ошибок.
 - [Frontend](tech/frontend.md) — **TypeScript**, React, Vite/Next, Three.js/Babylon, Monaco, gravity, **UI/UX-критика**.
 - [Gamedev](tech/gamedev.md) — браузерные 2D/3D игры, gameplay architecture, rendering, physics, assets и playtesting.
 - [iOS](tech/ios.md) — Swift 6, SwiftUI/UIKit, concurrency, Xcode, testing, HIG и accessibility.
