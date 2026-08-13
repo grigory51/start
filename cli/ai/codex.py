@@ -210,7 +210,7 @@ def _codex_mcp(server: config.McpServer) -> dict:
     return value
 
 
-def merge_config(ctx: Ctx) -> None:
+def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None:
     """Merge owned MCP, feature and native HUD fields into ~/.codex/config.toml."""
     target = codex_dir() / "config.toml"
     sidecar = codex_dir() / ".start-config-managed.json"
@@ -246,6 +246,19 @@ def merge_config(ctx: Ctx) -> None:
             mcp_changes.append(f"~ {name}")
 
     config_changes: list[str] = []
+    for ref in sorted(disabled_plugin_refs or set()):
+        plugin_table = doc.get("plugins")
+        if plugin_table is not None and ref in plugin_table:
+            del plugin_table[ref]
+            config_changes.append(f"-plugins.{ref}")
+        hooks_table = doc.get("hooks")
+        hook_state = hooks_table.get("state") if hooks_table is not None else None
+        if hook_state is not None:
+            for key in list(hook_state):
+                if str(key).startswith(ref + ":"):
+                    del hook_state[key]
+                    config_changes.append(f"-hooks.state.{key}")
+
     features_table = doc.get("features")
     if features_table is None:
         features_table = tomlkit.table()
@@ -423,7 +436,7 @@ def _installed_plugins() -> set[str]:
     }
 
 
-def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
+def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> set[str]:
     marketplace_root = agents_dir() / "plugins"
     marketplace = marketplace_root / "marketplace.json"
     plugin_root = personal_plugins_dir()
@@ -432,6 +445,17 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
     previous = _read_json(sidecar, {"plugins": {}, "names": []})
     previous_hashes = previous.get("plugins", {}) if isinstance(previous, dict) else {}
     previous_names = set(previous.get("names", [])) if isinstance(previous, dict) else set()
+    disabled_names = {
+        plugin.plugin
+        for plugin in plugin_list
+        if not plugin.enabled and adapters.supports(plugin, "codex")
+    }
+    catalog_names = {
+        plugin.plugin
+        for plugin in plugin_list
+        if adapters.supports(plugin, "codex")
+    }
+    stale_names = previous_names | disabled_names
     current = _read_json(
         marketplace,
         {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []},
@@ -439,17 +463,18 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
     if current.get("name") != "personal":
         ctx.say(f"  ! {marketplace}: marketplace name должен быть personal")
         ctx.errors += 1
-        return
+        return set()
 
     foreign = [
         entry
         for entry in current.get("plugins", [])
-        if str(entry.get("name") or "") not in previous_names
+        if str(entry.get("name") or "") not in previous_names | catalog_names
     ]
     foreign_names = {str(entry.get("name") or "") for entry in foreign}
     managed_entries: list[dict] = []
     hashes: dict[str, str] = {}
     paths: dict[str, Path] = {}
+    failed_names: set[str] = set()
 
     for plugin in plugin_list:
         if not plugin.enabled or not adapters.supports(plugin, "codex"):
@@ -477,6 +502,7 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
         except (OSError, adapters.AdapterError) as exc:
             ctx.say(f"  ! {plugin.plugin}: Codex plugin adapter: {exc}")
             ctx.errors += 1
+            failed_names.add(plugin.plugin)
             continue
         if plugin.plugin in foreign_names:
             ctx.say(f"  ! personal marketplace уже содержит чужой plugin '{plugin.plugin}'")
@@ -496,6 +522,8 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
         )
         plugins.check_requirements(ctx, plugin.plugin, plugin.requirements)
 
+    stale_names = (previous_names - set(paths) - failed_names) | disabled_names
+
     ctx.say(f"Плагины -> {marketplace}")
     if not ctx.dry_run:
         plugin_root.mkdir(parents=True, exist_ok=True)
@@ -506,33 +534,43 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
         if stale.is_symlink() and _is_ours(_readlink(stale)):
             ctx.say(f"  ~ {name}: переношу managed symlink в {plugin_root}")
             ctx.do(f"rm {stale}", stale.unlink)
-    for name in sorted(previous_names - set(paths)):
-        stale = plugin_root / name
-        if stale.is_symlink() and _is_ours(_readlink(stale)):
-            ctx.do(f"rm {stale}", stale.unlink)
     for name, source in sorted(paths.items()):
         if ctx.dry_run and not source.exists():
             ctx.say(f"  [dry-run] ln -sfn {source} {plugin_root / name}")
         else:
             link(ctx, source, plugin_root / name, quiet=True)
 
-    desired = dict(current)
-    desired["plugins"] = foreign + managed_entries
     if ctx.dry_run:
         for name in sorted(paths):
             ctx.say(f"  [dry-run] codex plugin add {name}@personal")
         ctx.say()
-        return
-    _write_json(marketplace, desired)
+        return {f"{name}@personal" for name in stale_names}
 
     installed = _installed_plugins()
-    for name in sorted(previous_names - set(paths)):
+    removed_refs: set[str] = set()
+    removed_names: set[str] = set()
+    for name in sorted(stale_names):
         ref = f"{name}@personal"
         if ref in installed:
             proc = adapters.run_command(["codex", "plugin", "remove", ref, "--json"])
             if proc.returncode:
                 ctx.say(f"  ! remove {ref}: {(proc.stderr or proc.stdout).strip()}")
                 ctx.errors += 1
+                continue
+        removed_refs.add(ref)
+        removed_names.add(name)
+    retained_entries = [
+        entry
+        for entry in current.get("plugins", [])
+        if str(entry.get("name") or "") in failed_names | (stale_names - removed_names)
+    ]
+    desired = dict(current)
+    desired["plugins"] = foreign + retained_entries + managed_entries
+    _write_json(marketplace, desired)
+    for name in sorted(removed_names):
+        stale = plugin_root / name
+        if stale.is_symlink() and _is_ours(_readlink(stale)):
+            ctx.do(f"rm {stale}", stale.unlink)
     for name in sorted(paths):
         ref = f"{name}@personal"
         changed = previous_hashes.get(name) != hashes[name]
@@ -546,8 +584,21 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
                 ctx.errors += 1
             else:
                 ctx.say(f"  + {ref}")
-    _write_json(sidecar, {"names": sorted(paths), "plugins": hashes})
+    retained_names = failed_names | (stale_names - removed_names)
+    retained_hashes = {
+        name: previous_hashes[name]
+        for name in retained_names
+        if name in previous_hashes
+    }
+    _write_json(
+        sidecar,
+        {
+            "names": sorted(set(paths) | retained_names),
+            "plugins": retained_hashes | hashes,
+        },
+    )
     ctx.say()
+    return removed_refs
 
 
 def install_codex(ctx: Ctx) -> None:
@@ -555,9 +606,9 @@ def install_codex(ctx: Ctx) -> None:
     for warning in warnings:
         ctx.say(f"  ! {warning}")
         ctx.errors += 1
-    install_plugins(ctx, plugin_list)
+    disabled_plugin_refs = install_plugins(ctx, plugin_list)
     install_skills(ctx)
     install_agents(ctx, plugin_list)
     install_hooks(ctx)
     install_instructions(ctx)
-    merge_config(ctx)
+    merge_config(ctx, disabled_plugin_refs)

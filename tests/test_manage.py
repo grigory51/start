@@ -18,7 +18,6 @@ class PluginSettingsTests(unittest.IsolatedAsyncioTestCase):
             [("g", "configure")],
         )
         plugin = config.Plugin(
-            name="demo",
             path=Path("/demo"),
             source="contrib/demo",
             marketplace="personal",

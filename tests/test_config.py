@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +10,25 @@ from cli import config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_source_registration_uses_current_enabled_formats(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            cfg = Path(raw) / "config.toml"
+            with patch.object(config, "CONFIG", cfg):
+                self.assertTrue(
+                    config.add_source("skills", exclude=["hidden"])
+                )
+                self.assertTrue(config.add_source("agents", section="agents"))
+                self.assertTrue(config.add_source("plugin", section="plugins"))
+                self.assertFalse(config.add_source("plugin", section="plugins"))
+
+            ai = tomllib.loads(cfg.read_text())["ai"]
+            self.assertEqual(ai["skills"][0]["enabled"], ["*"])
+            self.assertEqual(ai["skills"][0]["exclude"], ["hidden"])
+            self.assertEqual(ai["agents"][0]["enabled"], ["*"])
+            self.assertTrue(ai["plugins"][0]["enabled"])
+            self.assertEqual(config._enabled_spec({"enabled": True}), [])
+            self.assertTrue(config._bool_enabled({"enabled": []}))
+
     def test_ai_catalog_defaults_to_both_platforms(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

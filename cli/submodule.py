@@ -5,7 +5,7 @@
 Шаги add_submodule:
   1. git submodule add <url> contrib/<name>
   2. автодетект подпапки со скилами (корень / ./skills / ./contrib/*)
-  3. config.add_source(path) — записать [[skills]] в версионный config.toml
+  3. config.add_source(path) — записать AI-source в версионный config.toml
   4. (опц.) install — разложить symlink'и нового источника
 
 Имя <name> по умолчанию выводится из URL (basename без .git). skills_subdir
@@ -117,7 +117,7 @@ def add_submodule(
 
     # 2a. Нативный plugin любой поддерживаемой платформы.
     if config._native_plugin_paths(sub_path):
-        added = config.add_plugin_source(sub_rel)
+        added = config.add_source(sub_rel, section="plugins")
         install_errors = 0
         if do_install:
             install_errors = run_up(skip_submodules=True, quiet=quiet)
@@ -158,11 +158,8 @@ def add_submodule(
     for candidate in agent_candidates:
         if candidate.is_dir() and any(candidate.glob("*.md")):
             rel = str(candidate.relative_to(REPO_DIR))
-            if config.add_agent_source(rel):
+            if config.add_source(rel, section="agents"):
                 agent_paths.append(rel)
-    if not added and not quiet:
-        # path уже был — не ошибка, но сообщим.
-        pass
 
     # 4. install
     install_errors = 0

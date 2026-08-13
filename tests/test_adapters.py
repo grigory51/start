@@ -236,7 +236,6 @@ class AdapterTests(unittest.TestCase):
                 )
             )
             plugin = config.Plugin(
-                name="demo-plugin",
                 path=plugin_root,
                 source="demo-plugin",
                 marketplace="demo",
@@ -309,7 +308,6 @@ class AdapterTests(unittest.TestCase):
             undeclared.mkdir(parents=True)
             (undeclared / "SKILL.md").write_text("# smui\n")
             plugin = config.Plugin(
-                name="cad",
                 path=plugin_root,
                 source="cad",
                 marketplace="personal",

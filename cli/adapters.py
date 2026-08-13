@@ -523,22 +523,6 @@ def codex_plugin(plugin: config.Plugin) -> Path:
     return destination
 
 
-def plugin_agents(plugin: config.Plugin, platform: str) -> list[Path]:
-    """Materialize companion agents bundled by a plugin."""
-    source_root = plugin.platform_paths.get("claude") or plugin.platform_paths.get("codex")
-    if not source_root:
-        return []
-    agents_dir = source_root / "agents"
-    if not agents_dir.is_dir():
-        return []
-    out: list[Path] = []
-    patterns = ("*.md", "*.toml")
-    for pattern in patterns:
-        for source in sorted(agents_dir.glob(pattern)):
-            out.append(materialize_agent(source, platform, source.stem))
-    return out
-
-
 def validate_generated_plugin(path: Path) -> list[str]:
     errors: list[str] = []
     manifest = config._json_object(path / ".codex-plugin" / "plugin.json")

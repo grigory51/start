@@ -18,6 +18,7 @@ import json
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import tomlkit
 
@@ -47,8 +48,6 @@ class Skill:
     # Прокидываются в каждый скил источника (как symlinks); менеджер сам их НЕ ставит,
     # только проверяет при up и подсказывает. Напр. локальный Skottie-плеер для рендера.
     requirements: list[dict] = field(default_factory=list)
-    # True, если у источника этого скила есть запись в config.local.toml ([local.skills]).
-    source_has_local: bool = False
     platforms: tuple[str, ...] = ("claude", "codex")
 
 
@@ -70,7 +69,6 @@ class Plugin:
     (override полями в config.toml). enabled — bool (плагин атомарен). seed-сборка
     и enabledPlugins ведутся по паре (plugin, marketplace).
     """
-    name: str            # имя источника (basename path) — для UI/идентификации
     path: Path           # абсолютный корень плагина (каталог с .claude-plugin/)
     source: str          # rel-path источника из config.toml ([[plugins]])
     marketplace: str     # marketplace name (из marketplace.json или override)
@@ -103,7 +101,6 @@ class Command:
     name: str
     path: Path
     source: str = ""     # path источника из config.toml ([[commands]])
-    description: str = ""
     platforms: tuple[str, ...] = ("claude", "codex")
 
 
@@ -116,7 +113,6 @@ class McpServer:
     """
     name: str
     enabled: bool
-    source: str = ""           # rel-path .mcp.json (режим file, зарезервировано), либо ""
     server: dict | None = None  # inline-спека {command,args,env|url,headers}
     enabled_base: bool = True
     enabled_local: bool | None = None
@@ -295,21 +291,9 @@ def _sources(doc: dict, warnings: list[str],
 
 
 def _enabled_spec(entry: dict) -> list[str]:
-    """`enabled`-список источника. Дефолт ["*"] (все). Терпит старый bool/строку.
-
-    Нормализует к list[str]: ["*"] — все, [] — ни одного, иначе явные имена.
-    Обратная совместимость: enabled = false → [], enabled = true/отсутствует → ["*"].
-    """
+    """`enabled`-список источника: ["*"] — все, [] — ни одного."""
     raw = entry.get("enabled", ["*"])
-    if raw is True:
-        return ["*"]
-    if raw is False:
-        return []
-    if isinstance(raw, str):
-        return [raw]
-    if isinstance(raw, list):
-        return [str(x) for x in raw]
-    return ["*"]
+    return [str(x) for x in raw] if isinstance(raw, list) else []
 
 
 def _load_local(warnings: list[str]) -> dict:
@@ -403,7 +387,6 @@ def load() -> ConfigResult:
         available = {p.name: p for p in root.iterdir() if is_skill(p)}
 
         spec = _effective_spec(lsec, rel, entry)
-        has_local = rel in lsec
         selected = _select_names(spec, list(available))
         # Имена из `enabled`, которых нет в источнике — предупреждаем.
         for n in spec:
@@ -424,7 +407,6 @@ def load() -> ConfigResult:
                 description=_read_description(available[n] / "SKILL.md"),
                 symlinks=symlinks,
                 requirements=requirements,
-                source_has_local=has_local,
                 platforms=_platforms(entry, rel, res.warnings),
             )
 
@@ -490,16 +472,9 @@ def load_agents() -> list[Agent]:
 # --- плагины (нативные CC) ----------------------------------------------------
 
 def _bool_enabled(entry: dict) -> bool:
-    """`enabled` источника как bool. Дефолт True. Терпит ["*"]/[] (для совместимости)."""
+    """`enabled` источника как bool. Дефолт True."""
     raw = entry.get("enabled", True)
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, str):
-        return raw in ("*", "true", "1")
-    if isinstance(raw, list):
-        # ["*"] или непустой список → включено; [] → выключено.
-        return bool(raw)
-    return True
+    return raw if isinstance(raw, bool) else True
 
 
 def read_plugin_manifest(path: Path) -> tuple[str, str, list[str]]:
@@ -669,7 +644,7 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
                 f"дубль плагина '{ref}': {rel} — пропуск (уже взят из {seen[ref].source})")
             continue
         seen[ref] = Plugin(
-            name=root.name, path=root, source=rel,
+            path=root, source=rel,
             marketplace=mp_name, plugin=plugin_name,
             enabled=_effective_bool(lsec, rel, entry),
             description=description,
@@ -725,15 +700,8 @@ def _discover_commands() -> tuple[list[Command], list[str]]:
                     f"(уже взята из {seen[n].source})")
                 continue
             seen[n] = Command(name=n, path=available[n], source=rel,
-                              description=_read_description(available[n]),
                               platforms=_platforms(entry, rel, warnings))
     return list(seen.values()), warnings
-
-
-def load_commands() -> list[Command]:
-    """Все команды из [[commands]]-источников. Warnings глушатся (для TUI)."""
-    commands, _ = _discover_commands()
-    return commands
 
 
 # --- MCP-серверы --------------------------------------------------------------
@@ -933,7 +901,6 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
             seen[name] = McpServer(
                 name=name,
                 enabled=_effective_bool(lsec, name, entry),
-                source=str(entry.get("source") or "").strip(),
                 server=server if isinstance(server, dict) else None,
                 enabled_base=False if local_only else _bool_enabled(entry),
                 enabled_local=enabled_local,
@@ -1028,86 +995,32 @@ def set_source_enabled(source: str, enabled: bool) -> None:
     _write_enabled(source, ["*"] if enabled else [])
 
 
-def source_paths() -> set[str]:
-    """Все path из [[ai.skills]] базового config.toml (для проверки дублей)."""
+def add_source(
+    rel_path: str,
+    *,
+    section: Literal["skills", "agents", "plugins"] = "skills",
+    exclude: list[str] | None = None,
+) -> bool:
+    """Добавить AI-source в версионный config.toml; дубль path игнорируется."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    return {e["path"] for e in _entries(_ai(base), CONFIG.name, warnings, key="skills")}
-
-
-def add_source(rel_path: str, *, exclude: list[str] | None = None) -> bool:
-    """Добавить [[ai.skills]] с данным path в версионный config.toml (tomlkit).
-
-    Добавление сабмодуля — версионное изменение (как запись в .gitmodules), пишем
-    в config.toml. Комментарии/форматирование
-    сохраняются. Дубль path игнорируется. Регистрирует источник скилов; источники
-    агентов ([[agents]]) добавляются в config.toml вручную. Новый источник
-    включает все свои скилы (enabled = ["*"]).
-
-    Возвращает True, если источник добавлен; False — если path уже есть.
-    """
-    if rel_path in source_paths():
+    paths = {
+        entry["path"]
+        for entry in _entries(_ai(base), CONFIG.name, warnings, key=section)
+    }
+    if rel_path in paths:
         return False
 
-    # Рендерим новый [[ai.skills]] как текст и дописываем в конец файла. tomlkit
-    # при append в AoT кладёт отбивку внутрь header'а ([[ai.skills]] + пустая
+    # Рендерим новый [[ai.*]] как текст и дописываем в конец файла. tomlkit
+    # при append в AoT кладёт отбивку внутрь header'а ([[ai.*]] + пустая
     # строка), что ломает выравнивание; текстовый append даёт ровно тот же стиль, что в base.
-    block = ("\n[[ai.skills]]\n"
+    enabled = "true" if section == "plugins" else '["*"]'
+    block = (f"\n[[ai.{section}]]\n"
              f'path = "{rel_path}"\n'
-             'enabled = ["*"]\n')
+             f"enabled = {enabled}\n")
     if exclude:
         block += f"exclude = {tomlkit.item(exclude).as_string()}\n"
 
-    existing = CONFIG.read_text() if CONFIG.is_file() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    CONFIG.write_text(existing + block)
-    return True
-
-
-def agent_source_paths() -> set[str]:
-    warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
-    return {e["path"] for e in _entries(_ai(base), CONFIG.name, warnings, key="agents")}
-
-
-def add_agent_source(rel_path: str) -> bool:
-    """Добавить общий [[ai.agents]] source."""
-    if rel_path in agent_source_paths():
-        return False
-    block = (
-        "\n[[ai.agents]]\n"
-        f'path = "{rel_path}"\n'
-        'enabled = ["*"]\n'
-    )
-    existing = CONFIG.read_text() if CONFIG.is_file() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    CONFIG.write_text(existing + block)
-    return True
-
-
-# --- запись (плагины) ---------------------------------------------------------
-
-def plugin_source_paths() -> set[str]:
-    """Все path из [[ai.plugins]] базового config.toml (для проверки дублей)."""
-    warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
-    return {e["path"] for e in _entries(_ai(base), CONFIG.name, warnings, key="plugins")}
-
-
-def add_plugin_source(rel_path: str) -> bool:
-    """Добавить [[ai.plugins]] с данным path в версионный config.toml.
-
-    Текстовый append (как add_source) — сохраняет стиль файла. Дубль path → False.
-    Новый плагин включён (enabled = true).
-    """
-    if rel_path in plugin_source_paths():
-        return False
-
-    block = ("\n[[ai.plugins]]\n"
-             f'path = "{rel_path}"\n'
-             'enabled = true\n')
     existing = CONFIG.read_text() if CONFIG.is_file() else ""
     if existing and not existing.endswith("\n"):
         existing += "\n"

@@ -29,6 +29,12 @@ class CodexConfigTests(unittest.TestCase):
             codex_home.mkdir()
             (codex_home / "config.toml").write_text(
                 'model = "custom"\n'
+                '[plugins."claude-mem@personal"]\nenabled = true\n'
+                '[plugins."foreign@other"]\nenabled = true\n'
+                '[hooks.state."claude-mem@personal:hooks/hooks.json:session_start:0:0"]\n'
+                'trusted_hash = "managed"\n'
+                '[hooks.state."foreign@other:hooks/hooks.json:session_start:0:0"]\n'
+                'trusted_hash = "foreign"\n'
                 '[tui]\nanimations = false\n'
                 '[mcp_servers.foreign]\ncommand = "foreign"\n'
                 '[features]\nforeign = true\nold_managed = true\n'
@@ -48,10 +54,23 @@ class CodexConfigTests(unittest.TestCase):
             ):
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    codex.merge_config(Ctx(dry_run=False, force=False))
+                    codex.merge_config(
+                        Ctx(dry_run=False, force=False),
+                        {"claude-mem@personal"},
+                    )
             merged = tomllib.loads((codex_home / "config.toml").read_text())
             self.assertEqual(merged["model"], "custom")
             self.assertFalse(merged["tui"]["animations"])
+            self.assertNotIn("claude-mem@personal", merged["plugins"])
+            self.assertTrue(merged["plugins"]["foreign@other"]["enabled"])
+            self.assertNotIn(
+                "claude-mem@personal:hooks/hooks.json:session_start:0:0",
+                merged["hooks"]["state"],
+            )
+            self.assertIn(
+                "foreign@other:hooks/hooks.json:session_start:0:0",
+                merged["hooks"]["state"],
+            )
             self.assertEqual(merged["mcp_servers"]["foreign"]["command"], "foreign")
             self.assertTrue(merged["features"]["foreign"])
             self.assertFalse(merged["features"]["apps"])
