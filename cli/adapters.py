@@ -318,8 +318,18 @@ import json, os, re, subprocess, sys
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 commands = json.load(open(os.path.join(root, "hooks", "original-commands.json")))
 payload = json.load(sys.stdin)
-command = commands[int(sys.argv[1])]
+entry = commands[int(sys.argv[1])]
 env = dict(os.environ, PLUGIN_ROOT=root, CLAUDE_PLUGIN_ROOT=root)
+
+def expand(value, payload):
+    value = value.replace("${CLAUDE_PLUGIN_ROOT}", root).replace("${PLUGIN_ROOT}", root)
+    for match in re.findall(r"\$\{((?:tool_input|tool_response)(?:\.[^}]+)+)\}", value):
+        current = payload
+        for part in match.split("."):
+            current = current.get(part, "") if isinstance(current, dict) else ""
+        value = value.replace("${" + match + "}", str(current))
+    return value
+
 payloads = [payload]
 if payload.get("tool_name") == "apply_patch":
     patch = payload.get("tool_input", {}).get("command", "")
@@ -331,7 +341,22 @@ if payload.get("tool_name") == "apply_patch":
         item["tool_input"] = {"file_path": os.path.abspath(os.path.join(payload.get("cwd", "."), path))}
         payloads.append(item)
 for item in payloads:
-    result = subprocess.run(command, shell=True, input=json.dumps(item), text=True, env=env)
+    if isinstance(entry, str):
+        command = entry
+        command_env = dict(env)
+        for index, match in enumerate(re.findall(r"\$\{((?:tool_input|tool_response)(?:\.[^}]+)+)\}", command)):
+            variable = f"START_HOOK_VALUE_{index}"
+            command_env[variable] = expand("${" + match + "}", item)
+            command = command.replace("${" + match + "}", "${" + variable + "}")
+        shell = True
+    else:
+        command = [
+            expand(str(entry["command"]), item),
+            *(expand(str(arg), item) for arg in entry["args"]),
+        ]
+        command_env = env
+        shell = False
+    result = subprocess.run(command, shell=shell, input=json.dumps(item), text=True, env=command_env)
     if result.returncode:
         raise SystemExit(result.returncode)
 '''
@@ -345,7 +370,7 @@ def _adapt_hooks(source_root: Path, destination: Path) -> None:
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         return
-    commands: list[str] = []
+    commands: list[str | dict[str, object]] = []
     for groups in hooks.values():
         if not isinstance(groups, list):
             continue
@@ -362,13 +387,19 @@ def _adapt_hooks(source_root: Path, destination: Path) -> None:
                 if not original:
                     continue
                 index = len(commands)
-                commands.append(original)
+                args = hook.get("args")
+                commands.append(
+                    {"command": original, "args": args}
+                    if isinstance(args, list) and args
+                    else original
+                )
                 hook["command"] = (
                     f'python3 "${{PLUGIN_ROOT}}/scripts/start-hook-adapter.py" {index}'
                 )
+                hook.pop("args", None)
     hook_dir = destination / "hooks"
     script_dir = destination / "scripts"
-    hook_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source.parent, hook_dir, dirs_exist_ok=True)
     script_dir.mkdir(parents=True, exist_ok=True)
     (hook_dir / "hooks.json").write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     (hook_dir / "original-commands.json").write_text(

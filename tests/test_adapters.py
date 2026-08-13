@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -199,6 +201,10 @@ class AdapterTests(unittest.TestCase):
             (skill / "reference.md").write_text("Reference\n")
             hooks = plugin_root / "hooks"
             hooks.mkdir()
+            (hooks / "hook-helper.py").write_text(
+                "import sys\nprint(sys.argv[1])\n"
+            )
+            (hooks / "helper.py").symlink_to("hook-helper.py")
             (hooks / "hooks.json").write_text(
                 json.dumps(
                     {
@@ -206,7 +212,22 @@ class AdapterTests(unittest.TestCase):
                             "PreToolUse": [
                                 {
                                     "hooks": [
-                                        {"type": "command", "command": "echo check"}
+                                        {
+                                            "type": "command",
+                                            "command": sys.executable,
+                                            "args": [
+                                                "${CLAUDE_PLUGIN_ROOT}/hooks/helper.py",
+                                                "${tool_input.file_path}",
+                                            ],
+                                        },
+                                        {
+                                            "type": "command",
+                                            "command": (
+                                                f'{sys.executable} '
+                                                '"${CLAUDE_PLUGIN_ROOT}/hooks/helper.py" '
+                                                '"${tool_input.file_path}"'
+                                            ),
+                                        },
                                     ]
                                 }
                             ]
@@ -244,6 +265,25 @@ class AdapterTests(unittest.TestCase):
             )
             command = generated_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
             self.assertIn("${PLUGIN_ROOT}/scripts/start-hook-adapter.py", command)
+            self.assertFalse((generated / "hooks" / "helper.py").is_symlink())
+            result = subprocess.run(
+                [sys.executable, generated / "scripts" / "start-hook-adapter.py", "0"],
+                input=json.dumps({"tool_input": {"file_path": "/tmp/demo.py"}}),
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "/tmp/demo.py")
+            result = subprocess.run(
+                [sys.executable, generated / "scripts" / "start-hook-adapter.py", "1"],
+                input=json.dumps(
+                    {"tool_input": {"file_path": "/tmp/$(printf INJECTED)"}}
+                ),
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "/tmp/$(printf INJECTED)")
             self.assertEqual(adapters.validate_generated_plugin(generated), [])
 
     def test_native_codex_plugin_excludes_invalid_undeclared_skill(self) -> None:
