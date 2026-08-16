@@ -58,3 +58,12 @@
 [submodule "contrib/gravity-ui-skills"]
 	path = contrib/gravity-ui-skills
 	url = https://github.com/gravity-ui/skills
+[submodule "contrib/gimp-mcp"]
+	path = contrib/gimp-mcp
+	url = https://github.com/maorcc/gimp-mcp.git
+[submodule "contrib/orca"]
+	path = contrib/orca
+	url = https://github.com/stablyai/orca.git
+[submodule "contrib/skills"]
+	path = contrib/skills
+	url = https://github.com/vercel-labs/skills.git
