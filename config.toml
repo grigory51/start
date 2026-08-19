@@ -193,7 +193,6 @@ platforms = ["codex"]
 [[ai.mcp]]
 name = "playwright"
 enabled = true
-platforms = ["codex"]
 [ai.mcp.server]
 command = "npx"
 args = ["@playwright/mcp@latest"]
@@ -379,4 +378,12 @@ enabled = []
 
 [[ai.skills]]
 path = "contrib/diataxis-agent-skill"
+enabled = ["*"]
+
+[[ai.skills]]
+path = "contrib/orca/skills"
+enabled = ["orca-cli"]
+
+[[ai.skills]]
+path = "contrib/skills/skills"
 enabled = ["*"]
