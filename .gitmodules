@@ -67,3 +67,9 @@
 [submodule "contrib/skills"]
 	path = contrib/skills
 	url = https://github.com/vercel-labs/skills.git
+[submodule "contrib/anthropic-skills"]
+	path = contrib/anthropic-skills
+	url = https://github.com/anthropics/skills.git
+[submodule "contrib/taste-skill"]
+	path = contrib/taste-skill
+	url = https://github.com/leonxlnx/taste-skill.git

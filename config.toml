@@ -387,3 +387,11 @@ enabled = ["orca-cli"]
 [[ai.skills]]
 path = "contrib/skills/skills"
 enabled = ["*"]
+
+[[ai.skills]]
+path = "contrib/anthropic-skills/skills"
+enabled = ["frontend-design"]
+
+[[ai.skills]]
+path = "contrib/taste-skill/skills"
+enabled = ["taste-skill", "soft-skill"]
