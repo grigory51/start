@@ -8,7 +8,15 @@ from textual.app import App
 from textual.widgets import Checkbox
 
 from cli import config
-from cli.manage import PluginSettingsScreen, PluginsPane
+from cli.manage import CommandsPane, PluginSettingsScreen, PluginsPane
+
+
+class CommandsPaneTests(unittest.TestCase):
+    def test_reload_and_run_have_separate_bindings(self) -> None:
+        self.assertEqual(
+            [(binding.key, binding.action) for binding in CommandsPane.BINDINGS],
+            [("enter", "run"), ("r", "reload")],
+        )
 
 
 class PluginSettingsTests(unittest.IsolatedAsyncioTestCase):

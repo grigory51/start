@@ -770,15 +770,16 @@ class FilesPane(Container):
 class CommandsPane(Container):
     """Домен «Команды»: разовые действия ([[commands.tasks]]) — запуск по требованию.
 
-    `r`/Enter запускают команду для текущей ОС. Запуск идёт с выходом из TUI
-    (app.suspend) — команда получает реальный терминал, поэтому sudo может спросить
-    пароль. cwd = корень репо, в env прокинут `REPO` (абсолютный путь) — чтобы команда
-    ссылалась на скрипты репо независимо от cwd. Команда без варианта под текущую ОС
-    помечена недоступной и не запускается.
+    Enter запускает команду для текущей ОС; `r` перечитывает config.toml. Запуск идёт
+    с выходом из TUI (app.suspend) — команда получает реальный терминал, поэтому sudo
+    может спросить пароль. cwd = корень репо, в env прокинут `REPO` (абсолютный путь) —
+    чтобы команда ссылалась на скрипты репо независимо от cwd. Команда без варианта
+    под текущую ОС помечена недоступной и не запускается.
     """
 
     BINDINGS = [
-        Binding("r,enter", "run", "Run", show=True),
+        Binding("enter", "run", "Run", show=True),
+        Binding("r", "reload", "Reload", show=True),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -830,7 +831,7 @@ class CommandsPane(Container):
         elif not tasks:
             st.update("[yellow]No [[commands.tasks]] in config.toml[/]")
         else:
-            st.update("[dim]r / Enter — run selected command[/]")
+            st.update("[dim]Enter — run · r — reload[/]")
 
     def _status(self, msg: str, *, warn: bool = False) -> None:
         self.query_one("#commands-status", Static).update(
@@ -845,6 +846,10 @@ class CommandsPane(Container):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.action_run()
+
+    def action_reload(self) -> None:
+        self._reload()
+        self._status("Commands reloaded ✓")
 
     def action_run(self) -> None:
         t = self._at_cursor()
