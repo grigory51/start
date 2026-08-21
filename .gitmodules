@@ -73,3 +73,6 @@
 [submodule "contrib/taste-skill"]
 	path = contrib/taste-skill
 	url = https://github.com/leonxlnx/taste-skill.git
+[submodule "contrib/brand-building-skills"]
+	path = contrib/brand-building-skills
+	url = https://github.com/arnabbagxd/brand-building-skills.git
