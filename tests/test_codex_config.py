@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -27,9 +28,29 @@ class CodexConfigTests(unittest.TestCase):
             home = Path(raw)
             codex_home = home / ".codex"
             codex_home.mkdir()
+            sites_skill = (
+                codex_home
+                / "plugins"
+                / "cache"
+                / "openai-bundled"
+                / "sites"
+                / "1.0.0"
+                / "skills"
+                / "sites-building"
+                / "SKILL.md"
+            )
+            sites_skill.parent.mkdir(parents=True)
+            sites_skill.write_text("---\nname: sites-building\ndescription: Test\n---\n")
             (codex_home / "config.toml").write_text(
                 'model = "custom"\n'
+                '[[skills.config]]\n'
+                f'path = "{codex_home / "skills" / "canvas-design" / "SKILL.md"}"\n'
+                'enabled = true\n'
+                '[[skills.config]]\n'
+                'path = "/foreign/SKILL.md"\n'
+                'enabled = false\n'
                 '[plugins."claude-mem@personal"]\nenabled = true\n'
+                '[plugins."sites@openai-bundled"]\nenabled = true\n'
                 '[plugins."foreign@other"]\nenabled = true\n'
                 '[hooks.state."claude-mem@personal:hooks/hooks.json:session_start:0:0"]\n'
                 'trusted_hash = "managed"\n'
@@ -49,6 +70,16 @@ class CodexConfigTests(unittest.TestCase):
             with (
                 patch.dict(os.environ, {"HOME": str(home), "CODEX_HOME": str(codex_home)}),
                 patch.object(config, "load_mcp", return_value=([], [])),
+                patch.object(
+                    config,
+                    "load_codex_plugin_overrides",
+                    return_value={"sites@openai-bundled": False},
+                ),
+                patch.object(
+                    config,
+                    "load_codex_skill_overrides",
+                    return_value={"canvas-design": False},
+                ),
                 patch.object(config, "load_codex_features", return_value={"apps": False}),
                 patch.object(config, "load_statusline", return_value=status),
             ):
@@ -62,6 +93,12 @@ class CodexConfigTests(unittest.TestCase):
             self.assertEqual(merged["model"], "custom")
             self.assertFalse(merged["tui"]["animations"])
             self.assertNotIn("claude-mem@personal", merged["plugins"])
+            self.assertFalse(merged["plugins"]["sites@openai-bundled"]["enabled"])
+            self.assertEqual(len(merged["skills"]["config"]), 3)
+            self.assertFalse(merged["skills"]["config"][0]["enabled"])
+            self.assertEqual(merged["skills"]["config"][1]["path"], "/foreign/SKILL.md")
+            self.assertEqual(merged["skills"]["config"][2]["path"], str(sites_skill))
+            self.assertFalse(merged["skills"]["config"][2]["enabled"])
             self.assertTrue(merged["plugins"]["foreign@other"]["enabled"])
             self.assertNotIn(
                 "claude-mem@personal:hooks/hooks.json:session_start:0:0",
@@ -78,10 +115,90 @@ class CodexConfigTests(unittest.TestCase):
             self.assertEqual(merged["tui"]["status_line"], status["items"])
             sidecar = json.loads((codex_home / ".start-config-managed.json").read_text())
             self.assertEqual(sidecar["features"], ["apps"])
+            self.assertEqual(
+                sidecar["plugin_overrides"],
+                {"sites@openai-bundled": True},
+            )
+            self.assertEqual(
+                sidecar["skill_overrides"],
+                {
+                    str(codex_home / "skills" / "canvas-design" / "SKILL.md"): True,
+                    str(sites_skill): None,
+                },
+            )
             self.assertTrue(sidecar["status_line"])
             self.assertIn("MCP ->", output.getvalue())
             self.assertIn("Итого: 0, изменено 0.", output.getvalue())
             self.assertNotIn("Codex config", output.getvalue())
+
+            with (
+                patch.dict(os.environ, {"HOME": str(home), "CODEX_HOME": str(codex_home)}),
+                patch.object(config, "load_mcp", return_value=([], [])),
+                patch.object(config, "load_codex_plugin_overrides", return_value={}),
+                patch.object(config, "load_codex_skill_overrides", return_value={}),
+                patch.object(config, "load_codex_features", return_value={"apps": False}),
+                patch.object(config, "load_statusline", return_value=status),
+            ):
+                codex.merge_config(Ctx(dry_run=False, force=False))
+
+            restored = tomllib.loads((codex_home / "config.toml").read_text())
+            self.assertTrue(restored["plugins"]["sites@openai-bundled"]["enabled"])
+            self.assertTrue(restored["skills"]["config"][0]["enabled"])
+            self.assertEqual(restored["skills"]["config"][1]["path"], "/foreign/SKILL.md")
+            self.assertEqual(len(restored["skills"]["config"]), 2)
+            restored_sidecar = json.loads(
+                (codex_home / ".start-config-managed.json").read_text()
+            )
+            self.assertEqual(restored_sidecar["plugin_overrides"], {})
+            self.assertEqual(restored_sidecar["skill_overrides"], {})
+
+    def test_failed_plugin_reinstall_keeps_previous_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            plugin_root = home / "source" / "demo"
+            manifest = plugin_root / ".codex-plugin" / "plugin.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(
+                json.dumps({"name": "demo", "description": "Demo"})
+            )
+            sidecar = home / ".agents" / "plugins" / ".start-managed.json"
+            sidecar.parent.mkdir(parents=True)
+            sidecar.write_text(
+                json.dumps({"names": ["demo"], "plugins": {"demo": "old"}})
+            )
+            plugin = config.Plugin(
+                path=plugin_root,
+                source="demo",
+                marketplace="personal",
+                plugin="demo",
+                enabled=True,
+                platform_paths={"codex": plugin_root},
+            )
+            remove_failed = subprocess.CompletedProcess(
+                args=[],
+                returncode=1,
+                stdout="",
+                stderr="remove failed",
+            )
+
+            with (
+                patch("pathlib.Path.home", return_value=home),
+                patch.dict(
+                    os.environ,
+                    {
+                        "CODEX_HOME": str(home / ".codex"),
+                        "XDG_DATA_HOME": str(home / ".local" / "share"),
+                    },
+                ),
+                patch.object(codex, "_installed_plugins", return_value={"demo@personal"}),
+                patch.object(codex, "_run_plugin_command", return_value=remove_failed),
+            ):
+                ctx = Ctx(dry_run=False, force=False)
+                codex.install_plugins(ctx, [plugin])
+
+            saved = json.loads(sidecar.read_text())
+            self.assertEqual(saved["plugins"]["demo"], "old")
+            self.assertEqual(ctx.errors, 1)
 
 
 if __name__ == "__main__":

@@ -57,7 +57,7 @@ enabled = ["*"]
 
 [[ai.skills]]
 path = "contrib/blender-skills"
-enabled = ["image-to-3d", "multi-image-to-3d", "polyhaven-scene-builder", "threejs-export"]
+enabled = ["polyhaven-scene-builder", "threejs-export"]
 
 # lottie — text-to-Lottie: генерация/правка Lottie/Bodymovin JSON под локальный
 # Skia Skottie player. Сабмодуль — full app (React/Vite); скилы лежат в skills/,
@@ -84,7 +84,7 @@ enabled = ["gravity-ui"]
 
 [[ai.skills]]
 path = "contrib/threejs-game-skills/skills"
-enabled = ["threejs-gameplay-systems", "threejs-debug-profiler", "threejs-qa-release"]
+enabled = ["threejs-debug-profiler"]
 
 # --- Агенты -------------------------------------------------------------------
 #
@@ -108,13 +108,14 @@ enabled = ["architect", "cad-engineer", "designer", "gamedev-engineer", "noc-eng
 #   path     — корень плагина (каталог с .claude-plugin/).
 #   enabled  — bool: включить плагин целиком (плагин атомарен).
 #   marketplace / plugin — override имён, если автодетект из манифеста не сработал.
+#   codex_exclude_skills — скилы плагина, которые не надо включать в Codex bundle.
 #   [[ai.plugins.requirements]] — внешние зависимости плагина (бинари): name/check/hint.
 #              `check` — shell-команда проверки (rc 0 = есть), `hint` — как поставить.
 #              Менеджер при up проверяет и при отсутствии печатает hint (сам НЕ ставит).
 
 [[ai.plugins]]
 path = "contrib/claude-seo"
-enabled = true
+enabled = false
 
 [[ai.plugins]]
 path = "contrib/infostyle-skill"
@@ -123,6 +124,7 @@ enabled = true
 [[ai.plugins]]
 path = "contrib/text-to-cad"
 enabled = true
+codex_exclude_skills = ["bambu-labs"]
 
 [[ai.plugins]]
 path = "contrib/ponytail"
@@ -131,6 +133,7 @@ enabled = true
 [[ai.plugins]]
 path = "contrib/ui-ux-pro-max-skill"
 enabled = true
+codex_exclude_skills = ["banner-design", "brand", "design", "slides", "ui-styling"]
 
 # ast-index — структурный поиск по коду (символы/вызовы/иерархии) вместо grep.
 # Плагин даёт скил/правила/команды; сам бинарь ast-index ставится отдельно (см.
@@ -207,6 +210,23 @@ ENABLE_CLAUDEAI_MCP_SERVERS = "false"
 
 [ai.platforms.codex.features]
 apps = false
+
+[ai.platforms.codex.plugins]
+# Для выключенных plugins менеджер также отключает их SKILL.md, чтобы они не
+# занимали ограниченный индекс skills и не вытесняли пользовательские навыки.
+"browser@openai-bundled" = false
+"documents@openai-primary-runtime" = false
+"openai-templates@openai-curated-remote" = false
+"plugin-management@openai-curated-remote" = false
+"presentations@openai-primary-runtime" = false
+"sites@openai-bundled" = false
+"spreadsheets@openai-primary-runtime" = false
+"template-creator@openai-primary-runtime" = false
+
+[ai.platforms.codex.skills]
+# Имена user skills из ~/.codex/skills; менеджер пишет штатные [[skills.config]]
+# с абсолютным путём для текущего CODEX_HOME.
+canvas-design = false
 
 # --- Statusline --------------------------------------------------------------
 #
@@ -361,7 +381,7 @@ linux = 'bash "$REPO/scripts/codex-process-tree.sh"'
 
 [[ai.plugins]]
 path = "contrib/apple-bento-grid"
-enabled = true
+enabled = false
 
 [[ai.plugins]]
 path = "contrib/openai-plugins/plugins/build-ios-apps"
@@ -402,7 +422,7 @@ enabled = ["frontend-design"]
 
 [[ai.skills]]
 path = "contrib/taste-skill/skills"
-enabled = ["taste-skill", "soft-skill"]
+enabled = []
 
 [[ai.skills]]
 path = "contrib/brand-building-skills/skills"

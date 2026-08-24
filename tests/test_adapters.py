@@ -45,7 +45,11 @@ class AdapterTests(unittest.TestCase):
             skill = root / "skills" / "demo"
             skill.mkdir(parents=True)
             (skill / "SKILL.md").symlink_to("../../rules/demo.md")
-            rendered = adapters.materialize_skill(skill, root / "generated" / "demo")
+            rendered = adapters.materialize_skill(
+                skill,
+                root / "generated" / "demo",
+                allowed_root=root,
+            )
             self.assertFalse((rendered / "SKILL.md").is_symlink())
             self.assertIn("description: \"Demo\"", (rendered / "SKILL.md").read_text())
 
@@ -75,7 +79,7 @@ class AdapterTests(unittest.TestCase):
             (rendered / "references" / "guide.md").write_text("Changed\n")
             self.assertEqual((references / "guide.md").read_text(), "Changed\n")
 
-    def test_codex_skill_links_compatible_frontmatter_to_source(self) -> None:
+    def test_codex_skill_uses_compatible_source_directly(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             skill_root = root / "skills" / "demo"
@@ -92,11 +96,9 @@ class AdapterTests(unittest.TestCase):
             with patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}):
                 rendered = adapters.codex_skill(skill)
 
-            self.assertTrue((rendered / "SKILL.md").is_symlink())
-            (rendered / "SKILL.md").write_text(
-                '---\nname: demo\ndescription: "Demo"\n---\n\nChanged\n'
-            )
-            self.assertIn("Changed", source.read_text())
+            self.assertEqual(rendered, skill_root)
+            self.assertFalse((rendered / "SKILL.md").is_symlink())
+            self.assertEqual((rendered / "SKILL.md").read_text(), source.read_text())
 
     def test_codex_skill_normalizes_invalid_plain_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -198,7 +200,10 @@ class AdapterTests(unittest.TestCase):
                 "---\nname: demo-skill\ndescription: Demo skill\n"
                 "argument-hint: x\n---\n\nDo it.\n"
             )
-            (skill / "reference.md").write_text("Reference\n")
+            shared = plugin_root / "shared"
+            shared.mkdir()
+            (shared / "reference.md").write_text("Reference\n")
+            (skill / "reference.md").symlink_to("../../shared/reference.md")
             hooks = plugin_root / "hooks"
             hooks.mkdir()
             (hooks / "hook-helper.py").write_text(
@@ -242,11 +247,10 @@ class AdapterTests(unittest.TestCase):
                 plugin="demo-plugin",
                 enabled=True,
                 description="Demo",
-                native_platforms=("claude",),
                 platform_paths={"claude": plugin_root},
             )
             with patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}):
-                generated = adapters.generate_codex_plugin(plugin)
+                generated = adapters.codex_plugin(plugin)
             manifest = json.loads(
                 (generated / ".codex-plugin" / "plugin.json").read_text()
             )
@@ -258,6 +262,10 @@ class AdapterTests(unittest.TestCase):
             self.assertNotIn("argument-hint", normalized)
             self.assertFalse(
                 (generated / "skills" / "demo-skill" / "reference.md").is_symlink()
+            )
+            self.assertEqual(
+                (generated / "skills" / "demo-skill" / "reference.md").read_text(),
+                "Reference\n",
             )
             generated_hooks = json.loads(
                 (generated / "hooks" / "hooks.json").read_text()
@@ -283,7 +291,7 @@ class AdapterTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "/tmp/$(printf INJECTED)")
-            self.assertEqual(adapters.validate_generated_plugin(generated), [])
+            self.assertEqual(adapters.validate_codex_plugin(generated), [])
 
     def test_native_codex_plugin_excludes_invalid_undeclared_skill(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -304,6 +312,17 @@ class AdapterTests(unittest.TestCase):
             (declared / "SKILL.md").write_text(
                 "---\nname: cad\ndescription: CAD\n---\n\n# CAD\n"
             )
+            excluded = plugin_root / "skills" / "bambu-labs"
+            excluded.mkdir(parents=True)
+            (excluded / "SKILL.md").write_text(
+                "---\nname: bambu-labs\ndescription: Printer\n---\n\n# Printer\n"
+            )
+            cadgen = plugin_root / "packages" / "cadgen"
+            cadgen.mkdir(parents=True)
+            (cadgen / "runtime.py").write_text("RUNTIME = True\n")
+            packages = declared / "scripts" / "packages"
+            packages.mkdir(parents=True)
+            (packages / "cadgen").symlink_to("../../../../packages/cadgen")
             undeclared = plugin_root / "viewer" / "skills" / "smui"
             undeclared.mkdir(parents=True)
             (undeclared / "SKILL.md").write_text("# smui\n")
@@ -314,7 +333,7 @@ class AdapterTests(unittest.TestCase):
                 plugin="cad",
                 enabled=True,
                 description="CAD",
-                native_platforms=("codex",),
+                codex_exclude_skills=("bambu-labs",),
                 platform_paths={"codex": plugin_root},
             )
 
@@ -322,10 +341,39 @@ class AdapterTests(unittest.TestCase):
                 generated = adapters.codex_plugin(plugin)
 
             self.assertTrue((generated / "skills" / "cad" / "SKILL.md").is_file())
+            self.assertFalse((generated / "skills" / "bambu-labs").exists())
+            bundled_cadgen = (
+                generated / "skills" / "cad" / "scripts" / "packages" / "cadgen"
+            )
+            self.assertTrue(bundled_cadgen.is_dir())
+            self.assertFalse(bundled_cadgen.is_symlink())
+            self.assertEqual(
+                (bundled_cadgen / "runtime.py").read_text(),
+                "RUNTIME = True\n",
+            )
             self.assertFalse(
                 (generated / "viewer" / "skills" / "smui" / "SKILL.md").exists()
             )
             self.assertTrue((undeclared / "SKILL.md").is_file())
+
+    def test_codex_plugin_rejects_external_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            plugin_root = root / "demo"
+            plugin_root.mkdir()
+            (root / "outside.txt").write_text("private\n")
+            (plugin_root / "outside.txt").symlink_to("../outside.txt")
+            plugin = config.Plugin(
+                path=plugin_root,
+                source="demo",
+                marketplace="personal",
+                plugin="demo",
+                enabled=True,
+                platform_paths={"codex": plugin_root},
+            )
+
+            with self.assertRaisesRegex(adapters.AdapterError, "выходит за пределы"):
+                adapters.codex_plugin(plugin, dry_run=True)
 
 
 if __name__ == "__main__":

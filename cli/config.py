@@ -84,9 +84,9 @@ class Plugin:
     enabled_base: bool = True
     enabled_local: bool | None = None
     platforms: tuple[str, ...] = ("claude", "codex")
+    codex_exclude_skills: tuple[str, ...] = ()
     # Native representation(s) available in the source tree. Adapters prefer these
     # and only generate the missing platform representation.
-    native_platforms: tuple[str, ...] = ()
     platform_paths: dict[str, Path] = field(default_factory=dict)
 
     @property
@@ -655,7 +655,9 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
             enabled_base=_bool_enabled(entry),
             enabled_local=(_bool_enabled({"enabled": lsec[rel]}) if rel in lsec else None),
             platforms=_platforms(entry, rel, warnings),
-            native_platforms=tuple(native),
+            codex_exclude_skills=tuple(
+                str(name) for name in entry.get("codex_exclude_skills", [])
+            ),
             platform_paths=native,
         )
     return list(seen.values()), warnings
@@ -764,6 +766,26 @@ def load_codex_features() -> dict[str, bool]:
     if not isinstance(features, dict):
         return {}
     return {str(key): value for key, value in features.items() if isinstance(value, bool)}
+
+
+def load_codex_plugin_overrides() -> dict[str, bool]:
+    """`[ai.platforms.codex.plugins]` из config.toml."""
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    plugins = _ai(base).get("platforms", {}).get("codex", {}).get("plugins", {})
+    if not isinstance(plugins, dict):
+        return {}
+    return {str(key): value for key, value in plugins.items() if isinstance(value, bool)}
+
+
+def load_codex_skill_overrides() -> dict[str, bool]:
+    """`[ai.platforms.codex.skills]` из config.toml."""
+    warnings: list[str] = []
+    base = _load_doc(CONFIG, warnings)
+    skills = _ai(base).get("platforms", {}).get("codex", {}).get("skills", {})
+    if not isinstance(skills, dict):
+        return {}
+    return {str(key): value for key, value in skills.items() if isinstance(value, bool)}
 
 
 def load_hooks(platform: str) -> tuple[list[dict], list[str]]:

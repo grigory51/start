@@ -12,7 +12,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
 
 import tomlkit
@@ -124,12 +123,36 @@ def _replace_dir(staged: Path, destination: Path) -> None:
             old.unlink()
 
 
-def materialize_skill(source: Path, destination: Path) -> Path:
+def _validate_internal_symlinks(source: Path, allowed_root: Path) -> None:
+    """Не допустить копирования через symlink файлов вне plugin source."""
+    allowed_root = allowed_root.resolve()
+    for path in source.rglob("*"):
+        if not path.is_symlink():
+            continue
+        try:
+            target = path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise AdapterError(f"{path}: symlink не разрешается: {exc}") from exc
+        try:
+            target.relative_to(allowed_root)
+        except ValueError as exc:
+            raise AdapterError(
+                f"{path}: symlink выходит за пределы plugin source: {target}"
+            ) from exc
+
+
+def materialize_skill(
+    source: Path,
+    destination: Path,
+    *,
+    allowed_root: Path | None = None,
+) -> Path:
     """Copy a complete skill and normalize SKILL.md atomically."""
+    _validate_internal_symlinks(source, allowed_root or source)
     staged = destination.with_name(destination.name + ".next")
     if staged.exists():
         shutil.rmtree(staged)
-    shutil.copytree(source, staged, symlinks=True)
+    shutil.copytree(source, staged)
     staged_skill = staged / "SKILL.md"
     if staged_skill.is_symlink():
         staged_skill.unlink()
@@ -138,15 +161,13 @@ def materialize_skill(source: Path, destination: Path) -> Path:
     return destination
 
 
-def codex_skill(skill: config.Skill) -> Path:
-    destination = data_dir() / "generated" / "codex" / "skills" / skill.name
-    staged = destination.with_name(destination.name + ".next")
-    if staged.exists() or staged.is_symlink():
-        if staged.is_dir() and not staged.is_symlink():
-            shutil.rmtree(staged)
-        else:
-            staged.unlink()
+def codex_skill(skill: config.Skill, *, dry_run: bool = False) -> Path:
+    skill_file = skill.path / "SKILL.md"
+    normalized = normalized_skill_text(skill_file)
+    if not skill.symlinks and skill_file.read_text(errors="replace") == normalized:
+        return skill.path
 
+    destination = data_dir() / "generated" / "codex" / "skills" / skill.name
     source_entries = {source.name: source for source in skill.path.iterdir()}
     extra_destinations: list[Path] = []
     for item in skill.symlinks:
@@ -177,14 +198,17 @@ def codex_skill(skill: config.Skill) -> Path:
             )
         extra_destinations.append(extra)
 
+    if dry_run:
+        return destination
+
+    staged = destination.with_name(destination.name + ".next")
+    if staged.exists() or staged.is_symlink():
+        if staged.is_dir() and not staged.is_symlink():
+            shutil.rmtree(staged)
+        else:
+            staged.unlink()
     staged.mkdir(parents=True)
-    skill_file = skill.path / "SKILL.md"
-    skill_text = skill_file.read_text(errors="replace")
-    normalized = normalized_skill_text(skill_file)
-    if skill_text == normalized:
-        (staged / "SKILL.md").symlink_to(skill_file)
-    else:
-        (staged / "SKILL.md").write_text(normalized)
+    (staged / "SKILL.md").write_text(normalized)
     for source in skill.path.iterdir():
         if source.name == "SKILL.md":
             continue
@@ -307,7 +331,7 @@ def _copy_optional(source_root: Path, destination: Path, name: str) -> None:
         return
     target = destination / name
     if source.is_dir():
-        shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+        shutil.copytree(source, target, dirs_exist_ok=True)
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
@@ -423,7 +447,7 @@ def _command_skill(source: Path, destination: Path) -> None:
     )
 
 
-def generate_codex_plugin(plugin: config.Plugin) -> Path:
+def _generate_codex_plugin(plugin: config.Plugin) -> Path:
     """Generate a valid Codex bundle for a Claude-native plugin."""
     destination = data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
     staged = destination.with_name(destination.name + ".next")
@@ -431,6 +455,7 @@ def generate_codex_plugin(plugin: config.Plugin) -> Path:
         shutil.rmtree(staged)
     staged.mkdir(parents=True)
     source_root = plugin.platform_paths.get("claude", plugin.path)
+    _validate_internal_symlinks(source_root, plugin.path)
     source_manifest = _plugin_manifest(source_root, "claude")
 
     manifest = {
@@ -464,12 +489,20 @@ def generate_codex_plugin(plugin: config.Plugin) -> Path:
     }
     manifest["interface"] = interface
 
-    skills = _skill_roots(source_root, "claude")
+    skills = [
+        skill
+        for skill in _skill_roots(source_root, "claude")
+        if skill.name not in plugin.codex_exclude_skills
+    ]
     commands_dir = source_root / "commands"
     if skills or commands_dir.is_dir():
         manifest["skills"] = "./skills/"
         for skill in skills:
-            materialize_skill(skill, staged / "skills" / skill.name)
+            materialize_skill(
+                skill,
+                staged / "skills" / skill.name,
+                allowed_root=plugin.path,
+            )
         if commands_dir.is_dir():
             for command in sorted(commands_dir.glob("*.md")):
                 _command_skill(command, staged / "skills" / command.stem)
@@ -487,19 +520,34 @@ def generate_codex_plugin(plugin: config.Plugin) -> Path:
     (manifest_dir / "plugin.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
     )
+    errors = validate_codex_plugin(staged, plugin.plugin)
+    if errors:
+        raise AdapterError("; ".join(errors))
     _replace_dir(staged, destination)
     return destination
 
 
-def codex_plugin(plugin: config.Plugin) -> Path:
+def codex_plugin(plugin: config.Plugin, *, dry_run: bool = False) -> Path:
+    """Проверить или собрать автономный Codex bundle для plugin source."""
     native = plugin.platform_paths.get("codex")
-    if not native:
-        return generate_codex_plugin(plugin)
+    if dry_run:
+        source_root = native or plugin.platform_paths.get("claude", plugin.path)
+        _validate_internal_symlinks(source_root, plugin.path)
+        if native:
+            errors = validate_codex_plugin(native, plugin.plugin)
+            if errors:
+                raise AdapterError("; ".join(errors))
+            return native
+        for skill in _skill_roots(source_root, "claude"):
+            if skill.name not in plugin.codex_exclude_skills:
+                normalized_skill_text(skill / "SKILL.md")
+        return data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
 
-    declared = {
-        (skill / "SKILL.md").resolve()
-        for skill in _skill_roots(native, "codex")
-    }
+    if not native:
+        return _generate_codex_plugin(plugin)
+
+    skills = _skill_roots(native, "codex")
+    declared = {(skill / "SKILL.md").resolve() for skill in skills}
     invalid_undeclared: list[Path] = []
     for skill_file in native.rglob("SKILL.md"):
         if skill_file.resolve() in declared:
@@ -509,32 +557,32 @@ def codex_plugin(plugin: config.Plugin) -> Path:
         except AdapterError:
             invalid_undeclared.append(skill_file)
 
-    if not invalid_undeclared:
-        return native
-
     destination = data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
     staged = destination.with_name(destination.name + ".next")
     if staged.exists():
         shutil.rmtree(staged)
-    shutil.copytree(native, staged, symlinks=True)
+    _validate_internal_symlinks(native, plugin.path)
+    shutil.copytree(native, staged)
+    for skill in skills:
+        if skill.name in plugin.codex_exclude_skills:
+            shutil.rmtree(staged / skill.relative_to(native))
     for skill_file in invalid_undeclared:
         (staged / skill_file.relative_to(native)).unlink()
+    errors = validate_codex_plugin(staged, plugin.plugin)
+    if errors:
+        raise AdapterError("; ".join(errors))
     _replace_dir(staged, destination)
     return destination
 
 
-def validate_generated_plugin(path: Path) -> list[str]:
+def validate_codex_plugin(path: Path, expected_name: str | None = None) -> list[str]:
     errors: list[str] = []
     manifest = config._json_object(path / ".codex-plugin" / "plugin.json")
     name = str(manifest.get("name") or "")
-    if not _NAME_RE.fullmatch(name) or path.name != name:
+    if not _NAME_RE.fullmatch(name) or (expected_name or path.name) != name:
         errors.append("plugin name должен совпадать с папкой и быть в hyphen-case")
     if not str(manifest.get("description") or "").strip():
         errors.append("plugin manifest требует description")
     if "hooks" in manifest:
         errors.append("hooks не должны объявляться в plugin.json")
     return errors
-
-
-def run_command(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(command, cwd=cwd or config.REPO_DIR, capture_output=True, text=True)

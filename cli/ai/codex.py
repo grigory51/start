@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 import tomlkit
 
@@ -86,13 +87,7 @@ def install_skills(ctx: Ctx) -> None:
         if not adapters.supports(skill, "codex"):
             continue
         try:
-            if ctx.dry_run:
-                adapters.normalized_skill_text(skill.path / "SKILL.md")
-                sources[skill.name] = (
-                    adapters.data_dir() / "generated" / "codex" / "skills" / skill.name
-                )
-            else:
-                sources[skill.name] = adapters.codex_skill(skill)
+            sources[skill.name] = adapters.codex_skill(skill, dry_run=ctx.dry_run)
         except (OSError, adapters.AdapterError) as exc:
             ctx.say(f"  ! {skill.name}: Codex adapter: {exc}")
             ctx.errors += 1
@@ -210,11 +205,35 @@ def _codex_mcp(server: config.McpServer) -> dict:
     return value
 
 
+def _disabled_plugin_skills(plugin_overrides: dict[str, bool]) -> dict[str, bool]:
+    """Expand disabled plugins to native Codex skill overrides."""
+    overrides: dict[str, bool] = {}
+    for ref, enabled in plugin_overrides.items():
+        if enabled:
+            continue
+        plugin, separator, marketplace = ref.rpartition("@")
+        if not separator:
+            continue
+        cache = codex_dir() / "plugins" / "cache" / marketplace / plugin
+        for path in sorted(cache.glob("*/skills/**/SKILL.md")):
+            overrides[str(path)] = False
+    return overrides
+
+
 def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None:
-    """Merge owned MCP, feature and native HUD fields into ~/.codex/config.toml."""
+    """Merge owned MCP, plugin, skill, feature and HUD fields into Codex config."""
     target = codex_dir() / "config.toml"
     sidecar = codex_dir() / ".start-config-managed.json"
-    previous = _read_json(sidecar, {"mcp": [], "features": [], "status_line": False})
+    previous = _read_json(
+        sidecar,
+        {
+            "mcp": [],
+            "plugin_overrides": {},
+            "skill_overrides": {},
+            "features": [],
+            "status_line": False,
+        },
+    )
     try:
         doc = tomlkit.parse(target.read_text()) if target.is_file() else tomlkit.document()
     except Exception as exc:
@@ -246,8 +265,8 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
             mcp_changes.append(f"~ {name}")
 
     config_changes: list[str] = []
+    plugin_table = doc.get("plugins")
     for ref in sorted(disabled_plugin_refs or set()):
-        plugin_table = doc.get("plugins")
         if plugin_table is not None and ref in plugin_table:
             del plugin_table[ref]
             config_changes.append(f"-plugins.{ref}")
@@ -258,6 +277,93 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
                 if str(key).startswith(ref + ":"):
                     del hook_state[key]
                     config_changes.append(f"-hooks.state.{key}")
+
+    wanted_plugin_overrides = config.load_codex_plugin_overrides()
+    raw_originals = previous.get("plugin_overrides", {})
+    original_plugin_states = (
+        dict(raw_originals) if isinstance(raw_originals, dict) else {}
+    )
+    for ref in list(original_plugin_states):
+        if ref in wanted_plugin_overrides:
+            continue
+        entry = plugin_table.get(ref) if plugin_table is not None else None
+        original = original_plugin_states.pop(ref)
+        if entry is not None and isinstance(original, bool):
+            if entry.get("enabled") != original:
+                entry["enabled"] = original
+                config_changes.append(f"~plugins.{ref}.enabled")
+        elif entry is not None and "enabled" in entry:
+            del entry["enabled"]
+            if len(entry) == 0:
+                del plugin_table[ref]
+            config_changes.append(f"-plugins.{ref}.enabled")
+
+    for ref, enabled in wanted_plugin_overrides.items():
+        if plugin_table is None:
+            plugin_table = tomlkit.table()
+            doc["plugins"] = plugin_table
+        entry = plugin_table.get(ref)
+        if entry is None:
+            entry = tomlkit.table()
+            plugin_table[ref] = entry
+        if ref not in original_plugin_states:
+            current = entry.get("enabled")
+            original_plugin_states[ref] = current if isinstance(current, bool) else None
+        if entry.get("enabled") != enabled:
+            entry["enabled"] = enabled
+            config_changes.append(f"~plugins.{ref}.enabled")
+
+    wanted_skill_overrides = {
+        str(codex_dir() / "skills" / name / "SKILL.md"): enabled
+        for name, enabled in config.load_codex_skill_overrides().items()
+    }
+    wanted_skill_overrides.update(_disabled_plugin_skills(wanted_plugin_overrides))
+    raw_skill_originals = previous.get("skill_overrides", {})
+    original_skill_states: dict[str, bool | None] = {}
+    if isinstance(raw_skill_originals, dict):
+        for path, state in raw_skill_originals.items():
+            if not Path(path).is_absolute():
+                path = str(codex_dir() / "skills" / path / "SKILL.md")
+            original_skill_states[path] = state if isinstance(state, bool) else None
+    skills_table = doc.get("skills")
+    skill_entries = skills_table.get("config") if skills_table is not None else None
+    for path in list(original_skill_states):
+        if path in wanted_skill_overrides:
+            continue
+        entry = next(
+            (item for item in skill_entries or [] if str(item.get("path")) == path),
+            None,
+        )
+        original = original_skill_states.pop(path)
+        if entry is not None and isinstance(original, bool):
+            if entry.get("enabled") != original:
+                entry["enabled"] = original
+                config_changes.append(f"~skills.{Path(path).parent.name}.enabled")
+        elif entry is not None:
+            skill_entries.remove(entry)
+            config_changes.append(f"-skills.{Path(path).parent.name}")
+
+    for path, enabled in wanted_skill_overrides.items():
+        if skills_table is None:
+            skills_table = tomlkit.table()
+            doc["skills"] = skills_table
+        if skill_entries is None:
+            skill_entries = tomlkit.aot()
+            skills_table["config"] = skill_entries
+        entry = next(
+            (item for item in skill_entries if str(item.get("path")) == path),
+            None,
+        )
+        if entry is None:
+            entry = tomlkit.table()
+            entry["path"] = path
+            skill_entries.append(entry)
+        if path not in original_skill_states:
+            current = entry.get("enabled")
+            original_skill_states[path] = current if isinstance(current, bool) else None
+        if entry.get("enabled") != enabled:
+            entry["enabled"] = enabled
+            config_changes.append(f"~skills.{Path(path).parent.name}.enabled")
 
     features_table = doc.get("features")
     if features_table is None:
@@ -294,6 +400,8 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
 
     desired_sidecar = {
         "mcp": sorted(wanted),
+        "plugin_overrides": original_plugin_states,
+        "skill_overrides": original_skill_states,
         "features": sorted(wanted_features),
         "status_line": bool(status),
     }
@@ -436,6 +544,18 @@ def _installed_plugins() -> set[str]:
     }
 
 
+def _run_plugin_command(
+    action: Literal["add", "remove"],
+    ref: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["codex", "plugin", action, ref, "--json"],
+        cwd=REPO_DIR,
+        capture_output=True,
+        text=True,
+    )
+
+
 def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> set[str]:
     marketplace_root = agents_dir() / "plugins"
     marketplace = marketplace_root / "marketplace.json"
@@ -480,25 +600,7 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> set[str]:
         if not plugin.enabled or not adapters.supports(plugin, "codex"):
             continue
         try:
-            if ctx.dry_run and "codex" not in plugin.native_platforms:
-                source_root = plugin.platform_paths.get("claude", plugin.path)
-                for skill in adapters._skill_roots(source_root, "claude"):
-                    adapters.normalized_skill_text(skill / "SKILL.md")
-                source = (
-                    adapters.data_dir()
-                    / "generated"
-                    / "codex"
-                    / "plugins"
-                    / plugin.plugin
-                )
-            elif ctx.dry_run:
-                source = plugin.platform_paths["codex"]
-            else:
-                source = adapters.codex_plugin(plugin)
-            if "codex" not in plugin.native_platforms and not ctx.dry_run:
-                errors = adapters.validate_generated_plugin(source)
-                if errors:
-                    raise adapters.AdapterError("; ".join(errors))
+            source = adapters.codex_plugin(plugin, dry_run=ctx.dry_run)
         except (OSError, adapters.AdapterError) as exc:
             ctx.say(f"  ! {plugin.plugin}: Codex plugin adapter: {exc}")
             ctx.errors += 1
@@ -552,7 +654,7 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> set[str]:
     for name in sorted(stale_names):
         ref = f"{name}@personal"
         if ref in installed:
-            proc = adapters.run_command(["codex", "plugin", "remove", ref, "--json"])
+            proc = _run_plugin_command("remove", ref)
             if proc.returncode:
                 ctx.say(f"  ! remove {ref}: {(proc.stderr or proc.stdout).strip()}")
                 ctx.errors += 1
@@ -575,13 +677,25 @@ def install_plugins(ctx: Ctx, plugin_list: list[config.Plugin]) -> set[str]:
         ref = f"{name}@personal"
         changed = previous_hashes.get(name) != hashes[name]
         if ref in installed and changed:
-            adapters.run_command(["codex", "plugin", "remove", ref, "--json"])
+            proc = _run_plugin_command("remove", ref)
+            if proc.returncode:
+                ctx.say(f"  ! remove {ref}: {(proc.stderr or proc.stdout).strip()}")
+                ctx.errors += 1
+                if name in previous_hashes:
+                    hashes[name] = previous_hashes[name]
+                else:
+                    hashes.pop(name)
+                continue
             installed.discard(ref)
         if ref not in installed:
-            proc = adapters.run_command(["codex", "plugin", "add", ref, "--json"])
+            proc = _run_plugin_command("add", ref)
             if proc.returncode:
                 ctx.say(f"  ! install {ref}: {(proc.stderr or proc.stdout).strip()}")
                 ctx.errors += 1
+                if name in previous_hashes:
+                    hashes[name] = previous_hashes[name]
+                else:
+                    hashes.pop(name)
             else:
                 ctx.say(f"  + {ref}")
     retained_names = failed_names | (stale_names - removed_names)
