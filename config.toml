@@ -200,6 +200,14 @@ enabled = true
 command = "npx"
 args = ["@playwright/mcp@latest"]
 
+[[ai.mcp]]
+name = "figma"
+enabled = true
+platforms = ["codex"]
+[ai.mcp.server]
+url = "https://mcp.figma.com/mcp"
+oauth_resource = "https://mcp.figma.com/mcp"
+
 # --- Env (переменные окружения в ~/.claude/settings.json) ---------------------
 #
 # Произвольные env для CC, менеджер мержит их в settings.json `env` (managed, sidecar).
@@ -216,6 +224,7 @@ apps = false
 # занимали ограниченный индекс skills и не вытесняли пользовательские навыки.
 "browser@openai-bundled" = false
 "documents@openai-primary-runtime" = false
+"figma@openai-curated" = false
 "openai-templates@openai-curated-remote" = false
 "plugin-management@openai-curated-remote" = false
 "presentations@openai-primary-runtime" = false

@@ -267,9 +267,7 @@ class AdapterTests(unittest.TestCase):
                 (generated / "skills" / "demo-skill" / "reference.md").read_text(),
                 "Reference\n",
             )
-            generated_hooks = json.loads(
-                (generated / "hooks" / "hooks.json").read_text()
-            )
+            generated_hooks = json.loads((generated / "hooks.json").read_text())
             command = generated_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
             self.assertIn("${PLUGIN_ROOT}/scripts/start-hook-adapter.py", command)
             self.assertFalse((generated / "hooks" / "helper.py").is_symlink())
@@ -291,6 +289,67 @@ class AdapterTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "/tmp/$(printf INJECTED)")
+            self.assertEqual(adapters.validate_codex_plugin(generated), [])
+
+    def test_native_codex_plugin_normalizes_legacy_hooks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            plugin_root = root / "ponytail"
+            (plugin_root / ".codex-plugin").mkdir(parents=True)
+            (plugin_root / ".codex-plugin" / "plugin.json").write_text(
+                json.dumps(
+                    {
+                        "name": "ponytail",
+                        "description": "Ponytail",
+                        "hooks": "./hooks/claude-codex-hooks.json",
+                    }
+                )
+            )
+            hooks = plugin_root / "hooks"
+            hooks.mkdir()
+            (hooks / "claude-codex-hooks.json").write_text(
+                json.dumps(
+                    {
+                        "hooks": {
+                            "SessionStart": [
+                                {
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": "true",
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+            plugin = config.Plugin(
+                path=plugin_root,
+                source="ponytail",
+                marketplace="personal",
+                plugin="ponytail",
+                enabled=True,
+                description="Ponytail",
+                platform_paths={"codex": plugin_root},
+            )
+
+            with patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}):
+                generated = adapters.codex_plugin(plugin)
+
+            manifest = json.loads(
+                (generated / ".codex-plugin" / "plugin.json").read_text()
+            )
+            self.assertNotIn("hooks", manifest)
+            generated_hooks = json.loads((generated / "hooks.json").read_text())
+            command = generated_hooks["hooks"]["SessionStart"][0]["hooks"][0][
+                "command"
+            ]
+            self.assertIn("${PLUGIN_ROOT}/scripts/start-hook-adapter.py", command)
+            self.assertFalse(
+                (generated / "hooks" / "claude-codex-hooks.json").exists()
+            )
             self.assertEqual(adapters.validate_codex_plugin(generated), [])
 
     def test_native_codex_plugin_excludes_invalid_undeclared_skill(self) -> None:

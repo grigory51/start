@@ -386,8 +386,7 @@ for item in payloads:
 '''
 
 
-def _adapt_hooks(source_root: Path, destination: Path) -> None:
-    source = source_root / "hooks" / "hooks.json"
+def _adapt_hooks(source: Path, destination: Path) -> None:
     if not source.is_file():
         return
     data = config._json_object(source)
@@ -423,15 +422,33 @@ def _adapt_hooks(source_root: Path, destination: Path) -> None:
                 hook.pop("args", None)
     hook_dir = destination / "hooks"
     script_dir = destination / "scripts"
-    shutil.copytree(source.parent, hook_dir, dirs_exist_ok=True)
+    if source.parent.name == "hooks":
+        shutil.copytree(source.parent, hook_dir, dirs_exist_ok=True)
+        copied_source = hook_dir / source.name
+        if copied_source.is_file():
+            copied_source.unlink()
     script_dir.mkdir(parents=True, exist_ok=True)
-    (hook_dir / "hooks.json").write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    (destination / "hooks.json").write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    )
     (hook_dir / "original-commands.json").write_text(
         json.dumps(commands, indent=2, ensure_ascii=False) + "\n"
     )
     adapter = script_dir / "start-hook-adapter.py"
     adapter.write_text(_HOOK_ADAPTER)
     adapter.chmod(0o755)
+
+
+def _legacy_codex_hooks(plugin_root: Path) -> Path | None:
+    hooks = _plugin_manifest(plugin_root, "codex").get("hooks")
+    if hooks is None:
+        return None
+    if not isinstance(hooks, str):
+        raise AdapterError("hooks в plugin.json должен быть путём")
+    source = (plugin_root / hooks).resolve()
+    if not source.is_relative_to(plugin_root.resolve()) or not source.is_file():
+        raise AdapterError(f"hooks в plugin.json не разрешается: {hooks}")
+    return source
 
 
 def _command_skill(source: Path, destination: Path) -> None:
@@ -513,7 +530,7 @@ def _generate_codex_plugin(plugin: config.Plugin) -> Path:
         manifest["mcpServers"] = "./.mcp.json"
     if (staged / ".app.json").is_file():
         manifest["apps"] = "./.app.json"
-    _adapt_hooks(source_root, staged)
+    _adapt_hooks(source_root / "hooks" / "hooks.json", staged)
 
     manifest_dir = staged / ".codex-plugin"
     manifest_dir.mkdir()
@@ -534,7 +551,12 @@ def codex_plugin(plugin: config.Plugin, *, dry_run: bool = False) -> Path:
         source_root = native or plugin.platform_paths.get("claude", plugin.path)
         _validate_internal_symlinks(source_root, plugin.path)
         if native:
-            errors = validate_codex_plugin(native, plugin.plugin)
+            hooks = _legacy_codex_hooks(native)
+            errors = validate_codex_plugin(
+                native,
+                plugin.plugin,
+                allow_legacy_hooks=hooks is not None,
+            )
             if errors:
                 raise AdapterError("; ".join(errors))
             return native
@@ -563,6 +585,15 @@ def codex_plugin(plugin: config.Plugin, *, dry_run: bool = False) -> Path:
         shutil.rmtree(staged)
     _validate_internal_symlinks(native, plugin.path)
     shutil.copytree(native, staged)
+    manifest_path = staged / ".codex-plugin" / "plugin.json"
+    manifest = config._json_object(manifest_path)
+    hooks = _legacy_codex_hooks(native)
+    if hooks:
+        manifest.pop("hooks")
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+        )
+        _adapt_hooks(hooks, staged)
     for skill in skills:
         if skill.name in plugin.codex_exclude_skills:
             shutil.rmtree(staged / skill.relative_to(native))
@@ -575,7 +606,12 @@ def codex_plugin(plugin: config.Plugin, *, dry_run: bool = False) -> Path:
     return destination
 
 
-def validate_codex_plugin(path: Path, expected_name: str | None = None) -> list[str]:
+def validate_codex_plugin(
+    path: Path,
+    expected_name: str | None = None,
+    *,
+    allow_legacy_hooks: bool = False,
+) -> list[str]:
     errors: list[str] = []
     manifest = config._json_object(path / ".codex-plugin" / "plugin.json")
     name = str(manifest.get("name") or "")
@@ -583,6 +619,6 @@ def validate_codex_plugin(path: Path, expected_name: str | None = None) -> list[
         errors.append("plugin name должен совпадать с папкой и быть в hyphen-case")
     if not str(manifest.get("description") or "").strip():
         errors.append("plugin manifest требует description")
-    if "hooks" in manifest:
+    if "hooks" in manifest and not allow_legacy_hooks:
         errors.append("hooks не должны объявляться в plugin.json")
     return errors
