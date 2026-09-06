@@ -1,4 +1,4 @@
-"""claude.py — шаги домена Claude (~/.claude): agents, skills, commands, hooks,
+"""claude.py — шаги домена Claude (~/.claude): agents, skills, hooks,
 CLAUDE.md, rules, statusline.
 
 Раскладка:
@@ -7,8 +7,7 @@ CLAUDE.md, rules, statusline.
              Per-file, чтобы смешивать агентов из разных источников в одной папке.
   skills   — ~/.claude/skills это РЕАЛЬНАЯ папка; каждый скил <name>/ — тоже
              РЕАЛЬНАЯ папка-зеркало с per-file symlink'ами на записи верхнего
-             уровня source-папки скила + доп. symlink'и из [[skills.symlinks]].
-  commands — per-file symlink в ~/.claude/commands/ (зеркало agents).
+             уровня source-папки скила.
   hooks    — per-file symlink в ~/.claude/hooks/ (папку не трогаем: там лежат
              сторонние хуки не из репо).
   CLAUDE.md— один symlink на repo/ai/instructions/global.md.
@@ -34,13 +33,6 @@ from ..install import (
     ensure_real_dir,
     link,
 )
-
-
-class SkillCollisionError(Exception):
-    """destination из [[skills.symlinks]] совпал с реальной записью скила.
-
-    Ошибка конфига: доп. symlink перекрыл бы родной файл/папку скила. Прерывает
-    раскладку скилов (перехват в run_install)."""
 
 
 def _is_our_mirror(d) -> bool:
@@ -103,50 +95,11 @@ def install_agents(ctx: Ctx) -> None:
     ctx.say()
 
 
-def install_commands(ctx: Ctx) -> None:
-    """Slash-команды -> ~/.claude/commands/ (per-file symlink). Зеркало install_agents."""
-    dst_root = CLAUDE_DIR / "commands"
-    commands, warnings = config._discover_commands()
-    if not commands and not warnings:
-        return  # нет [[commands]] — ничего не печатаем
-    ctx.say(f"Команды -> {dst_root}/  (per-file symlink)")
-    if not ctx.dry_run:
-        CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
-
-    ok, migrated = ensure_real_dir(ctx, dst_root)
-    if not ok:
-        ctx.say()
-        return
-
-    for w in warnings:
-        ctx.say(f"  ! {w}")
-        ctx.errors += 1
-
-    commands = [c for c in commands if adapters.supports(c, "claude")]
-    wanted = {c.name + ".md" for c in commands}
-
-    if not migrated and dst_root.is_dir() and not dst_root.is_symlink():
-        for entry in sorted(dst_root.iterdir()):
-            if entry.is_symlink() and _is_ours(_readlink(entry)) and entry.name not in wanted:
-                ctx.say(f"  - {entry.name} больше не активна — удаляю symlink")
-                ctx.do(f"rm {entry}", entry.unlink)
-
-    changed = 0
-    for c in commands:
-        st = link(ctx, c.path, dst_root / (c.name + ".md"), assume_absent=migrated, quiet=True)
-        changed += st == "linked"
-    delta = f", изменено {changed}" if changed else " — без изменений"
-    cm = _plural(len(commands), "команда", "команды", "команд")
-    ctx.say(f"  Итого: {cm}{delta}.")
-    ctx.say()
-
-
 def _mirror_skill(ctx: Ctx, skill: config.Skill, dst) -> tuple[int, int]:
     """Разложить per-file зеркало одного скила в dst (реальная папка).
 
     На каждую запись верхнего уровня source-папки скила — отдельный symlink
-    (файл или папка как dir-symlink, без рекурсии внутрь). Плюс доп. symlink'и
-    из [[skills.symlinks]]. Коллизия destination с записью скила → SkillCollisionError.
+    (файл или папка как dir-symlink, без рекурсии внутрь).
 
     Вывод агрегирован: одна строка на скил (link() в quiet). Возвращает
     (total, linked) — всего элементов в зеркале, из них поставлено/обновлено.
@@ -163,21 +116,7 @@ def _mirror_skill(ctx: Ctx, skill: config.Skill, dst) -> tuple[int, int]:
                   assume_absent=migrated, quiet=True)
         linked += st == "linked"
 
-    # 2) доп. symlink'и [[skills.symlinks]] с проверкой коллизий.
-    wanted_extra: set[str] = set()
-    for sl in skill.symlinks:
-        dest = sl["destination"]
-        if dest in src_entries:
-            raise SkillCollisionError(
-                f"{skill.name}/{dest}: [[skills.symlinks]] перекрывает родную "
-                f"запись скила — исправьте config.toml")
-        extra_src = (REPO_DIR / sl["source"]).resolve()
-        st = link(ctx, extra_src, dst / dest,
-                  kind="/" if extra_src.is_dir() else "", assume_absent=migrated, quiet=True)
-        linked += st == "linked"
-        wanted_extra.add(dest)
-
-    total = len(src_entries) + len(wanted_extra)
+    total = len(src_entries)
 
     # Одна строка на скил: + если что-то менялось, иначе = (без изменений).
     items = _plural(total, "элемент", "элемента", "элементов")
@@ -186,10 +125,10 @@ def _mirror_skill(ctx: Ctx, skill: config.Skill, dst) -> tuple[int, int]:
     else:
         ctx.say(f"  = {skill.name}/ — {items}")
 
-    # 3) внутренняя чистка: наши symlink'и в зеркале без соответствия (источник
-    #    удалён или destination убран из config). Пропускаем после миграции.
+    # 2) внутренняя чистка: наши symlink'и в зеркале без соответствия (источник
+    #    удалён). Пропускаем после миграции.
     if not migrated and dst.is_dir() and not dst.is_symlink():
-        wanted = set(src_entries) | wanted_extra
+        wanted = set(src_entries)
         for entry in sorted(dst.iterdir()):
             if (entry.is_symlink() and _is_ours(_readlink(entry))
                     and entry.name not in wanted):

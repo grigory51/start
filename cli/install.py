@@ -117,13 +117,7 @@ def _symlink(src: Path, dst: Path) -> None:
 
 
 def _is_ours(p: Path) -> bool:
-    for root in (REPO_DIR, adapters.data_dir()):
-        try:
-            p.resolve().relative_to(root)
-            return True
-        except ValueError:
-            continue
-    return False
+    return any(p.resolve().is_relative_to(root) for root in (REPO_DIR, adapters.data_dir()))
 
 
 # --- миграция folder-symlink -> реальная папка --------------------------------
@@ -240,15 +234,7 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
 
         # 3. Loose-symlink'и.
         claude.install_agents(ctx)
-        try:
-            claude.install_skills(ctx)
-        except claude.SkillCollisionError as e:
-            # Коллизия [[skills.symlinks]] — фатально для skills-фазы: прерываем
-            # раскладку скилов. Остальное всё ещё разложим. Ненулевой ctx.errors → exit 1.
-            ctx.say(f"  ! {e}")
-            ctx.errors += 1
-            ctx.say()
-        claude.install_commands(ctx)
+        claude.install_skills(ctx)
         claude.install_hooks(ctx)
         claude.install_claude_md(ctx)
         claude.install_rules(ctx)

@@ -279,18 +279,10 @@ function main() {
   // экрана: между левой частью и focus набиваем пробелы до ширины терминала. Цвет-
   // термометр по доле к FOCUS_MAX, эмодзи на порогах, мигание на переборе.
   const fm = focusElapsed();
-  let focusSeg = "";
-  if (fm != null) {
-    const emoji = fm >= FOCUS_MAX ? " 🔥" : fm >= FOCUS_WARN ? " ⏰" : fm >= FOCUS_NUDGE ? " 🍅" : "";
-    const blink = fm >= FOCUS_MAX ? C.blink : "";
-    const color = blink + heat(Math.min(100, (fm / FOCUS_MAX) * 100));
-    focusSeg = `${C.dim}focus: ${C.reset}${color}${dur(fm * 60000)}${emoji}${C.reset}`;
-  }
-
-  if (!focusSeg) {
-    process.stdout.write(left);
-    return;
-  }
+  const emoji = fm >= FOCUS_MAX ? " 🔥" : fm >= FOCUS_WARN ? " ⏰" : fm >= FOCUS_NUDGE ? " 🍅" : "";
+  const blink = fm >= FOCUS_MAX ? C.blink : "";
+  const color = blink + heat(Math.min(100, (fm / FOCUS_MAX) * 100));
+  const focusSeg = `${C.dim}focus: ${C.reset}${color}${dur(fm * 60000)}${emoji}${C.reset}`;
 
   // CC съедает несколько колонок справа (паддинг рамки + место под свои сообщения),
   // поэтому реальная ширина меньше stty cols. Держим запас, чтобы focus не обрезался и

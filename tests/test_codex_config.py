@@ -72,15 +72,13 @@ class CodexConfigTests(unittest.TestCase):
                 patch.object(config, "load_mcp", return_value=([], [])),
                 patch.object(
                     config,
-                    "load_codex_plugin_overrides",
-                    return_value={"sites@openai-bundled": False},
+                    "load_codex_flags",
+                    side_effect=lambda section: {
+                        "plugins": {"sites@openai-bundled": False},
+                        "skills": {"canvas-design": False},
+                        "features": {"apps": False},
+                    }[section],
                 ),
-                patch.object(
-                    config,
-                    "load_codex_skill_overrides",
-                    return_value={"canvas-design": False},
-                ),
-                patch.object(config, "load_codex_features", return_value={"apps": False}),
                 patch.object(config, "load_statusline", return_value=status),
             ):
                 output = io.StringIO()
@@ -134,9 +132,13 @@ class CodexConfigTests(unittest.TestCase):
             with (
                 patch.dict(os.environ, {"HOME": str(home), "CODEX_HOME": str(codex_home)}),
                 patch.object(config, "load_mcp", return_value=([], [])),
-                patch.object(config, "load_codex_plugin_overrides", return_value={}),
-                patch.object(config, "load_codex_skill_overrides", return_value={}),
-                patch.object(config, "load_codex_features", return_value={"apps": False}),
+                patch.object(
+                    config,
+                    "load_codex_flags",
+                    side_effect=lambda section: (
+                        {"apps": False} if section == "features" else {}
+                    ),
+                ),
                 patch.object(config, "load_statusline", return_value=status),
             ):
                 codex.merge_config(Ctx(dry_run=False, force=False))

@@ -278,7 +278,7 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
                     del hook_state[key]
                     config_changes.append(f"-hooks.state.{key}")
 
-    wanted_plugin_overrides = config.load_codex_plugin_overrides()
+    wanted_plugin_overrides = config.load_codex_flags("plugins")
     raw_originals = previous.get("plugin_overrides", {})
     original_plugin_states = (
         dict(raw_originals) if isinstance(raw_originals, dict) else {}
@@ -315,7 +315,7 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
 
     wanted_skill_overrides = {
         str(codex_dir() / "skills" / name / "SKILL.md"): enabled
-        for name, enabled in config.load_codex_skill_overrides().items()
+        for name, enabled in config.load_codex_flags("skills").items()
     }
     wanted_skill_overrides.update(_disabled_plugin_skills(wanted_plugin_overrides))
     raw_skill_originals = previous.get("skill_overrides", {})
@@ -369,7 +369,7 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
     if features_table is None:
         features_table = tomlkit.table()
         doc["features"] = features_table
-    wanted_features = config.load_codex_features()
+    wanted_features = config.load_codex_flags("features")
     for name in previous.get("features", []):
         if name not in wanted_features and name in features_table:
             del features_table[name]

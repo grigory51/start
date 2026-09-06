@@ -39,14 +39,10 @@ class Skill:
     source: str          # path источника из config.toml
     enabled: bool        # эффективный: имя в enabled-спеке (с учётом local overlay)
     description: str = ""
-    # Доп. symlink'и из [[skills.symlinks]] источника: [{source, destination}].
-    # source — путь относительно корня репо; destination — имя/путь внутри
-    # папки-зеркала скила. Применяются к каждому скилу источника.
-    symlinks: list[dict] = field(default_factory=list)
     # Внешние зависимости из [[skills.requirements]] источника: [{name, check, hint}].
     # check — shell-команда проверки наличия (rc 0 = есть); hint — как поставить.
-    # Прокидываются в каждый скил источника (как symlinks); менеджер сам их НЕ ставит,
-    # только проверяет при up и подсказывает. Напр. локальный Skottie-плеер для рендера.
+    # Менеджер сам их НЕ ставит, только проверяет при up и подсказывает. Напр. локальный
+    # Skottie-плеер для рендера.
     requirements: list[dict] = field(default_factory=list)
     platforms: tuple[str, ...] = ("claude", "codex")
 
@@ -93,15 +89,6 @@ class Plugin:
     def ref(self) -> str:
         """Идентификатор плагина для enabledPlugins: '<plugin>@<marketplace>'."""
         return f"{self.plugin}@{self.marketplace}"
-
-
-@dataclass
-class Command:
-    """Slash-команда из [[commands]]: имя файла без .md, путь, источник."""
-    name: str
-    path: Path
-    source: str = ""     # path источника из config.toml ([[commands]])
-    platforms: tuple[str, ...] = ("claude", "codex")
 
 
 @dataclass
@@ -299,8 +286,8 @@ def _enabled_spec(entry: dict) -> list[str]:
 def _load_local(warnings: list[str]) -> dict:
     """Секция [local.ai] из config.local.toml ({} если файла нет).
 
-    Формат: [local.<section>] <key> = <enabled>. section ∈ skills/agents/commands/
-    plugins/mcp. key — path источника (или name для mcp). Переопределяет enabled;
+    Формат: [local.<section>] <key> = <enabled>. section ∈ skills/agents/plugins/mcp.
+    key — path источника (или name для mcp). Переопределяет enabled;
     machine-only MCP-источники объявляются отдельно через [[ai.mcp]] в том же файле.
     """
     doc = _load_doc(CONFIG_LOCAL, warnings)
@@ -332,29 +319,6 @@ def _select_names(spec: list[str], available: list[str]) -> set[str]:
     return set(spec)
 
 
-def _parse_symlinks(entry: dict, rel: str, warnings: list[str]) -> list[dict]:
-    """Разобрать [[skills.symlinks]] источника: список {source, destination}.
-
-    nested array-of-tables → entry["symlinks"] = list[dict]. Каждая запись обязана
-    иметь непустые source/destination (строки). source — путь относительно корня
-    репо; destination — имя/путь внутри папки-зеркала скила (нормализуется strip).
-    Битые записи пропускаются с warning.
-    """
-    out: list[dict] = []
-    raw = entry.get("symlinks", [])
-    if not isinstance(raw, list):
-        warnings.append(f"{rel}: [[skills.symlinks]] не список — игнорирую")
-        return out
-    for sl in raw:
-        src = (sl.get("source") or "").strip() if isinstance(sl, dict) else ""
-        dst = (sl.get("destination") or "").strip().strip("/") if isinstance(sl, dict) else ""
-        if not src or not dst:
-            warnings.append(f"{rel}: [[skills.symlinks]] без source/destination — пропуск")
-            continue
-        out.append({"source": src, "destination": dst})
-    return out
-
-
 def load() -> ConfigResult:
     """Разобрать config.toml и обнаружить все скилы.
 
@@ -382,7 +346,6 @@ def load() -> ConfigResult:
             continue
 
         exclude = set(entry.get("exclude", []))
-        symlinks = _parse_symlinks(entry, rel, res.warnings)
         requirements = _parse_requirements(entry, rel, res.warnings)
         available = {p.name: p for p in root.iterdir() if is_skill(p)}
 
@@ -405,7 +368,6 @@ def load() -> ConfigResult:
                 name=n, path=available[n], source=rel,
                 enabled=n in selected,
                 description=_read_description(available[n] / "SKILL.md"),
-                symlinks=symlinks,
                 requirements=requirements,
                 platforms=_platforms(entry, rel, res.warnings),
             )
@@ -669,43 +631,6 @@ def load_plugins() -> list[Plugin]:
     return plugins
 
 
-# --- команды (slash) ----------------------------------------------------------
-
-def _discover_commands() -> tuple[list[Command], list[str]]:
-    """Все команды из [[commands]]-источников. Зеркало _discover_agents (*.md)."""
-    warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
-    _legacy_schema_warning(base, warnings)
-    lsec = _load_local(warnings).get("commands", {})
-
-    seen: dict[str, Command] = {}
-    for rel, entry in _sources(_ai(base), warnings, key="commands"):
-        root = (REPO_DIR / rel).resolve()
-        if not root.is_dir():
-            warnings.append(f"источник команд не найден: {rel}")
-            continue
-
-        exclude = set(entry.get("exclude", []))
-        available = {p.stem: p for p in root.glob("*.md")}
-        spec = _effective_spec(lsec, rel, entry)
-        selected = _select_names(spec, list(available))
-        for n in spec:
-            if n != "*" and n not in available:
-                warnings.append(f"{rel}: команда '{n}' не найдена (нет {n}.md)")
-
-        for n in sorted(selected):
-            if n in exclude:
-                continue
-            if n in seen:
-                warnings.append(
-                    f"дубль имени команды '{n}': {rel} — пропуск "
-                    f"(уже взята из {seen[n].source})")
-                continue
-            seen[n] = Command(name=n, path=available[n], source=rel,
-                              platforms=_platforms(entry, rel, warnings))
-    return list(seen.values()), warnings
-
-
 # --- MCP-серверы --------------------------------------------------------------
 
 def load_statusline(platform: str = "claude") -> dict | None:
@@ -758,34 +683,14 @@ def load_env() -> dict[str, str]:
     return {str(k): str(v) for k, v in env.items()}
 
 
-def load_codex_features() -> dict[str, bool]:
-    """`[ai.platforms.codex.features]` из config.toml."""
+def load_codex_flags(section: Literal["features", "plugins", "skills"]) -> dict[str, bool]:
+    """Bool-флаги `[ai.platforms.codex.<section>]` из config.toml."""
     warnings: list[str] = []
     base = _load_doc(CONFIG, warnings)
-    features = _ai(base).get("platforms", {}).get("codex", {}).get("features", {})
-    if not isinstance(features, dict):
+    flags = _ai(base).get("platforms", {}).get("codex", {}).get(section, {})
+    if not isinstance(flags, dict):
         return {}
-    return {str(key): value for key, value in features.items() if isinstance(value, bool)}
-
-
-def load_codex_plugin_overrides() -> dict[str, bool]:
-    """`[ai.platforms.codex.plugins]` из config.toml."""
-    warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
-    plugins = _ai(base).get("platforms", {}).get("codex", {}).get("plugins", {})
-    if not isinstance(plugins, dict):
-        return {}
-    return {str(key): value for key, value in plugins.items() if isinstance(value, bool)}
-
-
-def load_codex_skill_overrides() -> dict[str, bool]:
-    """`[ai.platforms.codex.skills]` из config.toml."""
-    warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
-    skills = _ai(base).get("platforms", {}).get("codex", {}).get("skills", {})
-    if not isinstance(skills, dict):
-        return {}
-    return {str(key): value for key, value in skills.items() if isinstance(value, bool)}
+    return {str(key): value for key, value in flags.items() if isinstance(value, bool)}
 
 
 def load_hooks(platform: str) -> tuple[list[dict], list[str]]:
@@ -954,41 +859,43 @@ def _ai_aot(doc, key):
     return aot
 
 
-def _write_enabled(source: str, spec: list[str]) -> None:
-    """Записать `enabled = spec` в [[ai.skills]] с path=source в config.toml.
-
-    Правит существующую запись источника (она всегда есть — источники версионные);
-    комментарии и форматирование сохраняются (tomlkit). Если записи нет — создаёт.
-    """
+def _write_aot_enabled(
+    section: Literal["skills", "plugins", "mcp"],
+    key: Literal["path", "name"],
+    identifier: str,
+    enabled: bool | list[str],
+) -> None:
+    """Записать `enabled` в запись `[[ai.<section>]]`, сохранив TOML-форматирование."""
     doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
-
-    skills = _ai_aot(doc, "skills")
-
+    entries = _ai_aot(doc, section)
     target = None
-    for tbl in skills:
-        if tbl.get("path") == source:
+    for tbl in entries:
+        if tbl.get(key) == identifier:
             target = tbl
             break
     if target is None:
         target = tomlkit.table()
-        target["path"] = source
-        skills.append(target)
+        target[key] = identifier
+        entries.append(target)
 
-    arr = tomlkit.array()
-    arr.multiline(False)
-    arr.extend(spec)
-    target["enabled"] = arr
+    if isinstance(enabled, list):
+        value = tomlkit.array()
+        value.multiline(False)
+        value.extend(enabled)
+        target["enabled"] = value
+    else:
+        target["enabled"] = enabled
 
     CONFIG.write_text(tomlkit.dumps(doc))
 
 
-def set_skill_enabled(source: str, name: str, enabled: bool) -> None:
-    """Вкл/выкл скил `name` источника `source`, правя `enabled` в config.toml.
-
-    Берёт текущий разворот `enabled` источника, меняет членство `name`, пишет:
-      - если включены ВСЕ доступные скилы источника → enabled = ["*"];
-      - иначе → enabled = [отсортированный список включённых].
-    """
+def _set_skill_enabled(
+    source: str,
+    name: str,
+    enabled: bool,
+    scope: Literal["global", "local"],
+) -> None:
+    """Изменить включение скила в глобальной конфигурации или локальном overlay."""
     warnings: list[str] = []
     entry: dict = {}
     for rel, e in _sources(_ai(_load_doc(CONFIG, warnings)), warnings):
@@ -998,14 +905,26 @@ def set_skill_enabled(source: str, name: str, enabled: bool) -> None:
     root = (REPO_DIR / source).resolve()
     available = sorted(p.name for p in root.iterdir() if is_skill(p)) if root.is_dir() else []
 
-    selected = _select_names(_enabled_spec(entry), available)
+    if scope == "local":
+        spec = _effective_spec(_load_local(warnings).get("skills", {}), source, entry)
+    else:
+        spec = _enabled_spec(entry)
+    selected = _select_names(spec, available)
     if enabled:
         selected.add(name)
     else:
         selected.discard(name)
 
     new_spec = ["*"] if selected >= set(available) and available else sorted(selected)
-    _write_enabled(source, new_spec)
+    if scope == "local":
+        _write_local("skills", source, new_spec)
+    else:
+        _write_aot_enabled("skills", "path", source, new_spec)
+
+
+def set_skill_enabled(source: str, name: str, enabled: bool) -> None:
+    """Вкл/выкл скил `name` источника `source` в config.toml."""
+    _set_skill_enabled(source, name, enabled, "global")
 
 
 def set_source_enabled(source: str, enabled: bool) -> None:
@@ -1014,7 +933,7 @@ def set_source_enabled(source: str, enabled: bool) -> None:
     enabled=True  → enabled = ["*"] (все);
     enabled=False → enabled = []   (ни одного).
     """
-    _write_enabled(source, ["*"] if enabled else [])
+    _write_aot_enabled("skills", "path", source, ["*"] if enabled else [])
 
 
 def add_source(
@@ -1056,38 +975,12 @@ def set_plugin_enabled(source: str, enabled: bool) -> None:
     Плагин атомарен → enabled — простой bool. Правит существующую [[plugins]]-запись
     (источники версионные); комментарии/форматирование сохраняются (tomlkit).
     """
-    doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
-    plugins = _ai_aot(doc, "plugins")
-
-    target = None
-    for tbl in plugins:
-        if tbl.get("path") == source:
-            target = tbl
-            break
-    if target is None:
-        target = tomlkit.table()
-        target["path"] = source
-        plugins.append(target)
-
-    target["enabled"] = enabled
-    CONFIG.write_text(tomlkit.dumps(doc))
+    _write_aot_enabled("plugins", "path", source, enabled)
 
 
 def set_mcp_enabled(name: str, enabled: bool) -> None:
     """Вкл/выкл MCP `name` глобально, правя `enabled` в [[mcp]] config.toml (по name)."""
-    doc = tomlkit.parse(CONFIG.read_text()) if CONFIG.is_file() else tomlkit.document()
-    mcp = _ai_aot(doc, "mcp")
-    target = None
-    for tbl in mcp:
-        if tbl.get("name") == name:
-            target = tbl
-            break
-    if target is None:
-        target = tomlkit.table()
-        target["name"] = name
-        mcp.append(target)
-    target["enabled"] = enabled
-    CONFIG.write_text(tomlkit.dumps(doc))
+    _write_aot_enabled("mcp", "name", name, enabled)
 
 
 # --- запись (локальный overlay config.local.toml) -----------------------------
@@ -1095,7 +988,7 @@ def set_mcp_enabled(name: str, enabled: bool) -> None:
 def _write_local(section: str, key: str, value) -> None:
     """Записать [local.<section>] <key> = value в config.local.toml (tomlkit).
 
-    value — bool (plugins/mcp) или list[str] (skills/agents/commands). Создаёт файл и
+    value — bool (plugins/mcp) или list[str] (skills/agents). Создаёт файл и
     таблицы при необходимости. Комментарии/форматирование сохраняются.
     """
     doc = tomlkit.parse(CONFIG_LOCAL.read_text()) if CONFIG_LOCAL.is_file() else tomlkit.document()
@@ -1138,25 +1031,5 @@ def set_source_enabled_local(source: str, enabled: bool) -> None:
 
 
 def set_skill_enabled_local(source: str, name: str, enabled: bool) -> None:
-    """Локально вкл/выкл скил `name` источника: правит [local.skills][source] spec.
-
-    Берёт эффективный набор включённых скилов источника (с учётом текущего overlay),
-    меняет членство name, пишет ["*"] если включены все доступные, иначе список.
-    """
-    warnings: list[str] = []
-    entry: dict = {}
-    for rel, e in _sources(_ai(_load_doc(CONFIG, warnings)), warnings):
-        if rel == source:
-            entry = e
-            break
-    root = (REPO_DIR / source).resolve()
-    available = sorted(p.name for p in root.iterdir() if is_skill(p)) if root.is_dir() else []
-
-    lsec = _load_local(warnings).get("skills", {})
-    selected = _select_names(_effective_spec(lsec, source, entry), available)
-    if enabled:
-        selected.add(name)
-    else:
-        selected.discard(name)
-    new_spec = ["*"] if selected >= set(available) and available else sorted(selected)
-    _write_local("skills", source, new_spec)
+    """Локально вкл/выкл скил `name` источника в config.local.toml."""
+    _set_skill_enabled(source, name, enabled, "local")

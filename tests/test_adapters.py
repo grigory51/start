@@ -124,28 +124,6 @@ class AdapterTests(unittest.TestCase):
                 (rendered / "SKILL.md").read_text(),
             )
 
-    def test_codex_skill_rejects_extra_links_into_source(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            skill_root = root / "skills" / "demo"
-            (skill_root / "references").mkdir(parents=True)
-            (skill_root / "SKILL.md").write_text(
-                "---\nname: demo\ndescription: Demo\n---\n\nDo it.\n"
-            )
-            skill = config.Skill(
-                name="demo",
-                path=skill_root,
-                source="skills",
-                enabled=True,
-                symlinks=[{"source": "shared", "destination": "references/extra"}],
-            )
-
-            with (
-                patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}),
-                self.assertRaises(adapters.AdapterError),
-            ):
-                adapters.codex_skill(skill)
-
     def test_markdown_agent_becomes_codex_toml(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             source = Path(raw) / "programmer.md"

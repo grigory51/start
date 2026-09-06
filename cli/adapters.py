@@ -164,40 +164,10 @@ def materialize_skill(
 def codex_skill(skill: config.Skill, *, dry_run: bool = False) -> Path:
     skill_file = skill.path / "SKILL.md"
     normalized = normalized_skill_text(skill_file)
-    if not skill.symlinks and skill_file.read_text(errors="replace") == normalized:
+    if skill_file.read_text(errors="replace") == normalized:
         return skill.path
 
     destination = data_dir() / "generated" / "codex" / "skills" / skill.name
-    source_entries = {source.name: source for source in skill.path.iterdir()}
-    extra_destinations: list[Path] = []
-    for item in skill.symlinks:
-        extra = Path(item["destination"])
-        if (
-            extra.is_absolute()
-            or not extra.parts
-            or any(part in (".", "..") for part in extra.parts)
-        ):
-            raise AdapterError(
-                f"{skill.name}/{extra}: destination должен быть относительным путём "
-                "внутри скила"
-            )
-        if extra.parts[0] in source_entries:
-            raise AdapterError(
-                f"{skill.name}/{extra}: [[ai.skills.symlinks]] перекрывает родную "
-                "запись скила"
-            )
-        if any(
-            extra == existing
-            or extra in existing.parents
-            or existing in extra.parents
-            for existing in extra_destinations
-        ):
-            raise AdapterError(
-                f"{skill.name}/{extra}: [[ai.skills.symlinks]] содержит "
-                "пересекающиеся destination"
-            )
-        extra_destinations.append(extra)
-
     if dry_run:
         return destination
 
@@ -213,11 +183,6 @@ def codex_skill(skill: config.Skill, *, dry_run: bool = False) -> Path:
         if source.name == "SKILL.md":
             continue
         (staged / source.name).symlink_to(source)
-    for item, extra in zip(skill.symlinks, extra_destinations, strict=True):
-        source = (config.REPO_DIR / item["source"]).resolve()
-        target = staged / extra
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.symlink_to(source)
     _replace_dir(staged, destination)
     return destination
 

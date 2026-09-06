@@ -41,12 +41,7 @@ STAMP="$VENV/.installed"
 if [ ! -f "$STAMP" ] || [ "$REPO/pyproject.toml" -nt "$STAMP" ]; then
     echo "==> Installing dependencies into .venv..." >&2
     "$PY" -m pip install -q --upgrade pip
-    if "$PY" -m pip install -q -e "$REPO"; then
-        touch "$STAMP"
-    else
-        echo "Failed to install dependencies (no internet? see error below):" >&2
-        "$PY" -m pip install -e "$REPO" || true   # повтор без -q — показать причину
-        exit 1
-    fi
+    "$PY" -m pip install -e "$REPO"
+    touch "$STAMP"
 fi
 exec "$PY" -m cli "$@"

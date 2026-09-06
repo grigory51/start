@@ -14,7 +14,7 @@
 # config.local.toml (gitignore) переопределяет `enabled` источников для ТЕКУЩЕЙ машины
 # и может добавлять machine-only MCP через собственные [[ai.mcp]].
 # Формат остаётся ПЛОСКИМ: [local.<section>] "<key>" = <enabled>, где section ∈ skills/
-# agents/commands/plugins/mcp; key — path источника (или name для mcp). Плоским намеренно:
+# agents/plugins/mcp; key — path источника (или name для mcp). Плоским намеренно:
 # overlay машино-локальный. Формат: [local.ai.<section>].
 # Эффективный enabled = overlay, если ключ есть, иначе значение отсюда.
 
@@ -34,11 +34,6 @@
 #              (["a","c"]) либо [] (ни одного = источник выключен). TUI
 #              (`uv run start manage`) правит это поле прямо в этом файле.
 #   exclude  — какие скилы вообще не показывать (имена папок). Поверх enabled.
-#   symlinks — список [[ai.skills.symlinks]] = {source, destination}: доп. symlink,
-#              добавляемый в КАЖДОЕ зеркало скила этого источника. source — путь
-#              относительно корня репо; destination — имя/путь внутри папки-зеркала
-#              скила. Нужно, когда скил зовёт файл вне своей папки (напр. plugin-root
-#              scripts/). Коллизия destination с родной записью скила — ошибка установки.
 #   requirements — список [[ai.skills.requirements]] = {name, check, hint}: внешние
 #              зависимости скилов источника (та же схема, что у [[ai.plugins.requirements]]).
 #              check — shell-команда проверки (rc 0 = есть), hint — как поставить.
@@ -174,15 +169,6 @@ enabled = true
 path = "contrib/openai-plugins/plugins/game-studio"
 enabled = true
 platforms = ["codex"]
-
-# --- Slash-команды ------------------------------------------------------------
-#
-# Рассыпанные *.md команды (как [[ai.agents]]): имя файла без .md = имя команды,
-# backend раскладывает их в платформенный формат. Команды плагинов идут через [[ai.plugins]].
-#
-# [[ai.commands]]
-# path = "commands"
-# enabled = ["*"]
 
 # --- MCP-серверы (user-scope) -------------------------------------------------
 #

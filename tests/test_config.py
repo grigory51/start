@@ -50,6 +50,49 @@ class ConfigTests(unittest.TestCase):
                 result = config.load()
             self.assertEqual(result.skills[0].platforms, ("claude", "codex"))
 
+    def test_skill_toggle_global_and_local_preserve_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            for name in ("first", "second"):
+                skill = root / "skills" / name
+                skill.mkdir(parents=True)
+                (skill / "SKILL.md").write_text("---\nname: demo\n---\n")
+            cfg = root / "config.toml"
+            cfg.write_text(
+                "# managed source\n[[ai.skills]]\n"
+                'path = "skills"\n# enabled skills\nenabled = ["*"]\n'
+            )
+            local = root / "config.local.toml"
+            with (
+                patch.object(config, "REPO_DIR", root),
+                patch.object(config, "CONFIG", cfg),
+                patch.object(config, "CONFIG_LOCAL", local),
+            ):
+                config.set_skill_enabled("skills", "first", False)
+                config.set_skill_enabled_local("skills", "first", True)
+                config.set_skill_enabled_local("skills", "second", False)
+
+            self.assertIn("# managed source", cfg.read_text())
+            self.assertIn("# enabled skills", cfg.read_text())
+            self.assertEqual(
+                tomllib.loads(cfg.read_text())["ai"]["skills"][0]["enabled"],
+                ["second"],
+            )
+            self.assertEqual(
+                tomllib.loads(local.read_text())["local"]["ai"]["skills"]["skills"],
+                ["first"],
+            )
+
+    def test_codex_flags_keep_only_booleans(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            cfg = Path(raw) / "config.toml"
+            cfg.write_text(
+                "[ai.platforms.codex.features]\napps = true\nignored = \"yes\"\n"
+            )
+            with patch.object(config, "CONFIG", cfg):
+                flags = config.load_codex_flags("features")
+            self.assertEqual(flags, {"apps": True})
+
     def test_platform_only_is_explicit(self) -> None:
         warnings: list[str] = []
         self.assertEqual(
