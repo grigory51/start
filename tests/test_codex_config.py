@@ -23,6 +23,60 @@ class CodexConfigTests(unittest.TestCase):
             with patch("pathlib.Path.home", return_value=Path(raw)):
                 self.assertEqual(codex.personal_plugins_dir(), Path(raw) / "plugins")
 
+    def test_agents_are_registered_by_config_file(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            codex_home = root / ".codex"
+            generated = (
+                root / "data" / "start" / "generated" / "codex" / "agents"
+                / "architect.toml"
+            )
+            generated.parent.mkdir(parents=True)
+            generated.write_text(
+                'name = "architect"\n'
+                'description = "Architect"\n'
+                'developer_instructions = "Read only."\n'
+            )
+            legacy = codex_home / "agents" / "architect.toml"
+            legacy.parent.mkdir(parents=True)
+            legacy.symlink_to(generated)
+            (codex_home / ".start-agents-managed.json").write_text(
+                '{"names": ["architect.toml"]}\n'
+            )
+            agent = config.Agent(
+                name="architect",
+                path=generated,
+                description="Architect",
+            )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "CODEX_HOME": str(codex_home),
+                        "XDG_DATA_HOME": str(root / "data"),
+                    },
+                ),
+                patch.object(config, "_discover_agents", return_value=([agent], [])),
+                patch.object(config, "load_mcp", return_value=([], [])),
+                patch.object(config, "load_codex_flags", return_value={}),
+                patch.object(config, "load_statusline", return_value=None),
+            ):
+                ctx = Ctx(dry_run=False, force=False)
+                agents = codex.install_agents(ctx, [])
+                codex.merge_config(ctx, agent_configs=agents)
+                codex.remove_legacy_agent_links(ctx)
+
+            self.assertFalse(legacy.exists())
+            merged = tomllib.loads((codex_home / "config.toml").read_text())
+            self.assertEqual(
+                merged["agents"]["architect"],
+                {
+                    "description": "Architect",
+                    "config_file": str(generated),
+                },
+            )
+
     def test_merge_preserves_foreign_config(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             home = Path(raw)

@@ -14,7 +14,7 @@ import tomlkit
 
 from .. import adapters, config, plugins
 from ..config import REPO_DIR
-from ..install import Ctx, _is_ours, _readlink, ensure_real_dir, link
+from ..install import Ctx, _is_ours, _readlink, link
 
 
 def codex_dir() -> Path:
@@ -100,12 +100,15 @@ def install_skills(ctx: Ctx) -> None:
     )
 
 
-def install_agents(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
+def install_agents(
+    ctx: Ctx,
+    plugin_list: list[config.Plugin],
+) -> dict[str, dict[str, str]]:
     agents, warnings = config._discover_agents()
     for warning in warnings:
         ctx.say(f"  ! {warning}")
         ctx.errors += 1
-    sources: dict[str, Path] = {}
+    sources: dict[str, tuple[Path, str]] = {}
     catalog_count = 0
     for agent in agents:
         if not adapters.supports(agent, "codex"):
@@ -113,7 +116,7 @@ def install_agents(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
         try:
             if ctx.dry_run:
                 adapters.render_codex_agent(agent.path)
-                sources[f"{agent.name}.toml"] = (
+                source = (
                     adapters.data_dir()
                     / "generated"
                     / "codex"
@@ -121,7 +124,8 @@ def install_agents(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
                     / f"{agent.name}.toml"
                 )
             else:
-                sources[f"{agent.name}.toml"] = adapters.codex_agent(agent)
+                source = adapters.codex_agent(agent)
+            sources[agent.name] = (source, agent.description)
             catalog_count += 1
         except (OSError, adapters.AdapterError) as exc:
             ctx.say(f"  ! {agent.name}: Codex adapter: {exc}")
@@ -140,8 +144,9 @@ def install_agents(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
                 agent_sources = sorted((source_root / "agents").glob("*.md"))
                 agent_sources += sorted((source_root / "agents").glob("*.toml"))
             for raw_source in agent_sources:
+                rendered = adapters.render_codex_agent(raw_source)
+                description = str(tomlkit.parse(rendered).get("description") or "")
                 if ctx.dry_run:
-                    adapters.render_codex_agent(raw_source)
                     source = (
                         adapters.data_dir()
                         / "generated"
@@ -150,21 +155,44 @@ def install_agents(ctx: Ctx, plugin_list: list[config.Plugin]) -> None:
                         / f"{raw_source.stem}.toml"
                     )
                 else:
-                    source = adapters.materialize_agent(raw_source, "codex", raw_source.stem)
-                if source.name not in sources:
-                    sources[source.name] = source
+                    source = adapters.materialize_agent(
+                        raw_source,
+                        "codex",
+                        raw_source.stem,
+                    )
+                if raw_source.stem not in sources:
+                    sources[raw_source.stem] = (source, description)
                     companion_count += 1
         except (OSError, adapters.AdapterError) as exc:
             ctx.say(f"  ! {plugin.plugin}: companion agents: {exc}")
             ctx.errors += 1
 
-    _managed_link_set(
-        ctx,
-        f"Агенты ({catalog_count} catalog + {companion_count} plugin companions)",
-        codex_dir() / "agents",
-        sources,
-        codex_dir() / ".start-agents-managed.json",
+    ctx.say(
+        f"Агенты ({catalog_count} catalog + {companion_count} plugin companions) "
+        f"-> {codex_dir() / 'config.toml'}"
     )
+    ctx.say(f"  Итого: {len(sources)}.")
+    ctx.say()
+    return {
+        name: {"description": description, "config_file": str(source)}
+        for name, (source, description) in sources.items()
+    }
+
+
+def remove_legacy_agent_links(ctx: Ctx) -> None:
+    legacy_dir = codex_dir() / "agents"
+    sidecar = codex_dir() / ".start-agents-managed.json"
+    previous = _read_json(sidecar, {"names": []})
+    removed = 0
+    for filename in previous.get("names", []):
+        target = legacy_dir / filename
+        if target.is_symlink() and _is_ours(_readlink(target)):
+            ctx.do(f"rm {target}", target.unlink)
+            removed += 1
+    if not ctx.dry_run:
+        _write_json(sidecar, {"names": []})
+    if removed:
+        ctx.say(f"  - legacy symlink агентов: {removed}")
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -220,8 +248,12 @@ def _disabled_plugin_skills(plugin_overrides: dict[str, bool]) -> dict[str, bool
     return overrides
 
 
-def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None:
-    """Merge owned MCP, plugin, skill, feature and HUD fields into Codex config."""
+def merge_config(
+    ctx: Ctx,
+    disabled_plugin_refs: set[str] | None = None,
+    agent_configs: dict[str, dict[str, str]] | None = None,
+) -> None:
+    """Merge owned MCP, agent, plugin, skill, feature and HUD fields."""
     target = codex_dir() / "config.toml"
     sidecar = codex_dir() / ".start-config-managed.json"
     previous = _read_json(
@@ -230,6 +262,7 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
             "mcp": [],
             "plugin_overrides": {},
             "skill_overrides": {},
+            "agents": {},
             "features": [],
             "status_line": False,
         },
@@ -365,6 +398,35 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
             entry["enabled"] = enabled
             config_changes.append(f"~skills.{Path(path).parent.name}.enabled")
 
+    wanted_agents = agent_configs or {}
+    agents_table = doc.get("agents")
+    if agents_table is None:
+        agents_table = tomlkit.table()
+        doc["agents"] = agents_table
+    raw_agent_originals = previous.get("agents", {})
+    original_agents = (
+        dict(raw_agent_originals) if isinstance(raw_agent_originals, dict) else {}
+    )
+    for name in list(original_agents):
+        if name in wanted_agents:
+            continue
+        original = original_agents.pop(name)
+        if isinstance(original, dict):
+            agents_table[name] = original
+        elif name in agents_table:
+            del agents_table[name]
+        config_changes.append(f"-agents.{name}")
+    for name, value in wanted_agents.items():
+        current = agents_table.get(name)
+        if name not in original_agents:
+            original_agents[name] = (
+                current.unwrap() if hasattr(current, "unwrap") else None
+            )
+        current_value = current.unwrap() if hasattr(current, "unwrap") else current
+        if current_value != value:
+            agents_table[name] = value
+            config_changes.append(f"~agents.{name}")
+
     features_table = doc.get("features")
     if features_table is None:
         features_table = tomlkit.table()
@@ -402,6 +464,7 @@ def merge_config(ctx: Ctx, disabled_plugin_refs: set[str] | None = None) -> None
         "mcp": sorted(wanted),
         "plugin_overrides": original_plugin_states,
         "skill_overrides": original_skill_states,
+        "agents": original_agents,
         "features": sorted(wanted_features),
         "status_line": bool(status),
     }
@@ -722,7 +785,10 @@ def install_codex(ctx: Ctx) -> None:
         ctx.errors += 1
     disabled_plugin_refs = install_plugins(ctx, plugin_list)
     install_skills(ctx)
-    install_agents(ctx, plugin_list)
+    agent_configs = install_agents(ctx, plugin_list)
     install_hooks(ctx)
     install_instructions(ctx)
-    merge_config(ctx, disabled_plugin_refs)
+    config_errors = ctx.errors
+    merge_config(ctx, disabled_plugin_refs, agent_configs)
+    if ctx.errors == config_errors:
+        remove_legacy_agent_links(ctx)
