@@ -373,6 +373,15 @@ darwin = 'bash "$REPO/scripts/codex-process-tree.sh"'
 linux = 'bash "$REPO/scripts/codex-process-tree.sh"'
 
 
+[[commands.tasks]]
+name = "power-off-after-print"
+title = "Выключить принтер после печати"
+description = "Принтер 172.22.222.30: дождаться завершения текущей печати и остывания сопла ниже 50 °C, стола ниже 40 °C, затем выключить питание. Запускать во время печати; Ctrl-C — отмена ожидания."
+[commands.tasks.run]
+darwin = 'python3 "$REPO/scripts/power_off_after_print.py"'
+linux = 'python3 "$REPO/scripts/power_off_after_print.py"'
+
+
 
 [[ai.plugins]]
 path = "contrib/apple-bento-grid"
