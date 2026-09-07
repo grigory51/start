@@ -1,0 +1,80 @@
+{
+    "type": "filament",
+    "name": "PETG НИТ CR-10 Smart Pro",
+    "from": "User",
+    "version": "2.4.0.1",
+    "is_custom_defined": "0",
+    "inherits": "Generic PETG @System",
+    "filament_settings_id": [
+        "PETG НИТ CR-10 Smart Pro"
+    ],
+    "nozzle_temperature": [
+        "245"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "245"
+    ],
+    "filament_vendor": [
+        "НИТ"
+    ],
+    "compatible_printers": [
+        "CR-10 Smart Pro (Klipper)"
+    ],
+    "nozzle_temperature_range_low": [
+        "240"
+    ],
+    "nozzle_temperature_range_high": [
+        "255"
+    ],
+    "hot_plate_temp": [
+        "75"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "80"
+    ],
+    "textured_plate_temp": [
+        "75"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "80"
+    ],
+    "filament_flow_ratio": [
+        "0.96"
+    ],
+    "filament_retraction_length": [
+        "0.8"
+    ],
+    "filament_retraction_speed": [
+        "30"
+    ],
+    "close_fan_the_first_x_layers": [
+        "3"
+    ],
+    "fan_min_speed": [
+        "10"
+    ],
+    "fan_max_speed": [
+        "30"
+    ],
+    "enable_overhang_bridge_fan": [
+        "1"
+    ],
+    "overhang_fan_speed": [
+        "30"
+    ],
+    "internal_bridge_fan_speed": [
+        "30"
+    ],
+    "filament_notes": [
+        "НИТ PETG Basic: https://plastik-nit.ru/catalog/petg_basic/\nРекомендации производителя: сопло 240–255 °C, стол 70–80 °C, обдув 10–30%, откат 0,8 мм при 30 мм/с, flow ratio 0,96, минимальный диаметр сопла 0,3 мм, максимальный объёмный расход 18 мм³/с.\nСтартовые настройки: сопло 245 °C; стол 80 °C первый слой, далее 75 °C (Hot/Textured Plate). Лимит объёмного расхода 8 мм³/с и Pressure Advance 0,06 скопированы из PETG CR-10 Smart Pro; для этого материала их следует проверить калибровкой. Родитель — Generic PETG @System, поскольку установленная OrcaSlicer не загружает наследование от пользовательского профиля. Первые три слоя без обдува."
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "pressure_advance": [
+        "0.06"
+    ],
+    "filament_max_volumetric_speed": [
+        "8"
+    ]
+}
