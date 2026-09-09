@@ -91,7 +91,7 @@ enabled = ["threejs-debug-profiler"]
 
 [[ai.agents]]
 path = "ai/agents"
-enabled = ["architect", "cad-engineer", "designer", "gamedev-engineer", "noc-engineer", "programmer", "reviewer", "tech-writer"]
+enabled = ["*"]
 
 # --- Плагины (нативные CC) ----------------------------------------------------
 #
@@ -141,25 +141,6 @@ enabled = true
   name = "ast-index"
   check = "command -v ast-index"
   hint = "brew tap defendend/ast-index && brew trust defendend/ast-index && brew install ast-index"
-
-# claude-mem — персистентная память между сессиями: захват наблюдений через
-# lifecycle-хуки, AI-сжатие в summary, поиск по MCP. Плагин лежит в подкаталоге
-# plugin/ сабмодуля (marketplace.json в корне указывает source = ./plugin), поэтому
-# path — корень сабмодуля (ref: claude-mem@thedotmack). SessionStart-хук поднимает
-# worker-service на локальном порту (по умолчанию 37701; SQLite + векторный индекс),
-# рантайм — через bun. Требует node>=20 и bun — менеджер проверяет и подсказывает,
-# сам не ставит. Рантайм-deps плагина ставятся отдельно: bun install в plugin/.
-[[ai.plugins]]
-path = "contrib/claude-mem"
-enabled = false
-  [[ai.plugins.requirements]]
-  name = "node>=20"
-  check = "command -v node && node -e 'process.exit(+process.versions.node.split(\".\")[0]>=20?0:1)'"
-  hint = "1. Install nvm (https://github.com/nvm-sh/nvm)  2. nvm install --lts"
-  [[ai.plugins.requirements]]
-  name = "bun"
-  check = "command -v bun"
-  hint = "curl -fsSL https://bun.sh/install | bash  (или brew install oven-sh/bun/bun)"
 
 [[ai.plugins]]
 path = "contrib/Understand-Anything"
