@@ -79,3 +79,6 @@
 [submodule "contrib/redaktura-skills"]
 	path = contrib/redaktura-skills
 	url = https://github.com/N1arko/redaktura-skills
+[submodule "contrib/hyperframes"]
+	path = contrib/hyperframes
+	url = https://github.com/heygen-com/hyperframes
