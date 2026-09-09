@@ -432,3 +432,7 @@ enabled = []
 path = "contrib/brand-building-skills/skills"
 enabled = ["brand-naming"]
 exclude = ["brand-guidelines"]
+
+[[ai.plugins]]
+path = "contrib/redaktura-skills"
+enabled = true
