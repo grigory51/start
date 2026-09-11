@@ -157,6 +157,267 @@ class AdapterTests(unittest.TestCase):
             rendered = tomllib.loads(adapters.render_codex_agent(source))
             self.assertEqual(rendered["sandbox_mode"], "read-only")
 
+    def test_agent_skill_warnings_accept_enabled_and_qualified_plugin_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "agent.md"
+            source.write_text(
+                "---\nname: demo\ndescription: Demo\nskills:\n"
+                "  - loose\n  - game-studio:game-ui\n---\n\nDo it.\n"
+            )
+            loose_root = root / "loose"
+            loose_root.mkdir()
+            (loose_root / "SKILL.md").write_text("# Loose\n")
+            plugin_root = root / "game-studio"
+            (plugin_root / ".codex-plugin").mkdir(parents=True)
+            (plugin_root / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills"}'
+            )
+            (plugin_root / "skills" / "game-ui").mkdir(parents=True)
+            (plugin_root / "skills" / "game-ui" / "SKILL.md").write_text("# UI\n")
+            agent = config.Agent(name="demo", path=source)
+            skill = config.Skill(
+                name="loose", path=loose_root, source="loose", enabled=True
+            )
+            plugin = config.Plugin(
+                path=plugin_root,
+                source="game-studio",
+                marketplace="personal",
+                plugin="game-studio",
+                enabled=True,
+                platforms=("codex",),
+                platform_paths={"codex": plugin_root},
+            )
+            self.assertEqual(
+                adapters.agent_skill_warnings(agent, "codex", [skill], [plugin]), []
+            )
+
+    def test_agent_skill_warnings_report_disabled_and_ambiguous_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "agent.md"
+            source.write_text(
+                "---\nname: demo\ndescription: Demo\nskills:\n"
+                "  - disabled\n  - duplicate\n  - missing\n---\n\nDo it.\n"
+            )
+            agent = config.Agent(name="demo", path=source)
+            disabled = config.Skill(
+                name="disabled", path=root, source="skills", enabled=False
+            )
+            duplicate = config.Skill(
+                name="duplicate", path=root, source="skills", enabled=True
+            )
+            plugin_root = root / "plugin"
+            (plugin_root / ".codex-plugin").mkdir(parents=True)
+            (plugin_root / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills"}'
+            )
+            (plugin_root / "skills" / "duplicate").mkdir(parents=True)
+            (plugin_root / "skills" / "duplicate" / "SKILL.md").write_text("# Duplicate\n")
+            plugin = config.Plugin(
+                path=plugin_root,
+                source="plugin",
+                marketplace="personal",
+                plugin="plugin",
+                enabled=True,
+                platforms=("codex",),
+                platform_paths={"codex": plugin_root},
+            )
+            warnings = adapters.agent_skill_warnings(
+                agent, "codex", [disabled, duplicate], [plugin]
+            )
+            self.assertEqual(
+                warnings,
+                [
+                    "агент 'demo': навык 'disabled' для codex выключен",
+                    "агент 'demo': навык 'duplicate' для codex неоднозначен: "
+                    "duplicate, plugin@personal:duplicate",
+                    "агент 'demo': навык 'missing' для codex не найден",
+                ],
+            )
+
+    def test_agent_skill_warnings_use_local_skill_override(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            skill_root = root / "skills" / "demo"
+            skill_root.mkdir(parents=True)
+            (skill_root / "SKILL.md").write_text("# Demo\n")
+            source = root / "agent.md"
+            source.write_text(
+                "---\nname: agent\ndescription: Agent\nskills:\n"
+                "  - demo\n---\n\nDo it.\n"
+            )
+            cfg = root / "config.toml"
+            cfg.write_text('[[ai.skills]]\npath = "skills"\nenabled = ["*"]\n')
+            local = root / "config.local.toml"
+            local.write_text('[local.ai.skills]\nskills = []\n')
+            with (
+                patch.object(config, "REPO_DIR", root),
+                patch.object(config, "CONFIG", cfg),
+                patch.object(config, "CONFIG_LOCAL", local),
+            ):
+                skills = config.load().skills
+            warnings = adapters.agent_skill_warnings(
+                config.Agent(name="agent", path=source), "codex", skills, []
+            )
+            self.assertEqual(
+                warnings, ["агент 'agent': навык 'demo' для codex выключен"]
+            )
+
+    def test_agent_skill_warnings_use_codex_skill_and_plugin_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "agent.md"
+            source.write_text(
+                "---\nname: agent\ndescription: Agent\nskills:\n"
+                "  - demo\n  - plugin:plugin-skill\n---\n\nDo it.\n"
+            )
+            skill_root = root / "demo"
+            skill_root.mkdir()
+            (skill_root / "SKILL.md").write_text("# Demo\n")
+            plugin_root = root / "plugin"
+            (plugin_root / ".codex-plugin").mkdir(parents=True)
+            (plugin_root / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills"}'
+            )
+            plugin_skill = plugin_root / "skills" / "plugin-skill"
+            plugin_skill.mkdir(parents=True)
+            (plugin_skill / "SKILL.md").write_text("# Plugin\n")
+            plugin = config.Plugin(
+                path=plugin_root,
+                source="plugin",
+                marketplace="personal",
+                plugin="plugin",
+                enabled=True,
+                platforms=("codex",),
+                platform_paths={"codex": plugin_root},
+            )
+            with patch.object(
+                config,
+                "load_codex_flags",
+                side_effect=lambda section: (
+                    {"demo": False} if section == "skills" else {"plugin@personal": False}
+                ),
+            ):
+                warnings = adapters.agent_skill_warnings(
+                    config.Agent(name="agent", path=source),
+                    "codex",
+                    [config.Skill(name="demo", path=skill_root, source="skills", enabled=True)],
+                    [plugin],
+                )
+            self.assertEqual(
+                warnings,
+                [
+                    "агент 'agent': навык 'demo' для codex выключен",
+                    "агент 'agent': навык 'plugin:plugin-skill' для codex выключен",
+                ],
+            )
+
+    def test_agent_skill_warnings_do_not_fail_on_unreadable_plugin(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            source = Path(raw) / "agent.md"
+            source.write_text(
+                "---\nname: agent\ndescription: Agent\nskills:\n"
+                "  - plugin:demo\n---\n\nDo it.\n"
+            )
+            plugin = config.Plugin(
+                path=Path(raw),
+                source="plugin",
+                marketplace="personal",
+                plugin="plugin",
+                enabled=True,
+                platforms=("codex",),
+                platform_paths={"codex": Path(raw)},
+            )
+            with patch.object(adapters, "_skill_roots", side_effect=OSError("gone")):
+                warnings = adapters.agent_skill_warnings(
+                    config.Agent(name="agent", path=source), "codex", [], [plugin]
+                )
+            self.assertEqual(
+                warnings,
+                [
+                    "агент 'agent': не удалось прочитать навыки плагина "
+                    "'plugin' для codex: gone",
+                    "агент 'agent': навык 'plugin:demo' для codex не найден",
+                ],
+            )
+
+    def test_agent_skill_warnings_keep_plugin_marketplaces_distinct(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "agent.md"
+            source.write_text(
+                "---\nname: agent\ndescription: Agent\nskills:\n"
+                "  - plugin:demo\n  - plugin@first:demo\n---\n\nDo it.\n"
+            )
+            plugins = []
+            for marketplace in ("first", "second"):
+                plugin_root = root / marketplace
+                (plugin_root / ".codex-plugin").mkdir(parents=True)
+                (plugin_root / ".codex-plugin" / "plugin.json").write_text(
+                    '{"skills":"./skills"}'
+                )
+                skill = plugin_root / "skills" / "demo"
+                skill.mkdir(parents=True)
+                (skill / "SKILL.md").write_text("# Demo\n")
+                plugins.append(
+                    config.Plugin(
+                        path=plugin_root,
+                        source=marketplace,
+                        marketplace=marketplace,
+                        plugin="plugin",
+                        enabled=True,
+                        platforms=("codex",),
+                        platform_paths={"codex": plugin_root},
+                    )
+                )
+            warnings = adapters.agent_skill_warnings(
+                config.Agent(name="agent", path=source), "codex", [], plugins
+            )
+            self.assertEqual(
+                warnings,
+                [
+                    "агент 'agent': навык 'plugin:demo' для codex неоднозначен: "
+                    "plugin@first:demo, plugin@second:demo",
+                ],
+            )
+
+    def test_agent_skill_warnings_respect_plugin_excludes_and_platforms(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            source = root / "agent.md"
+            source.write_text(
+                "---\nname: demo\ndescription: Demo\nskills:\n"
+                "  - plugin:excluded\n  - plugin:other\n---\n\nDo it.\n"
+            )
+            plugin_root = root / "plugin"
+            (plugin_root / ".codex-plugin").mkdir(parents=True)
+            (plugin_root / ".codex-plugin" / "plugin.json").write_text(
+                '{"skills":"./skills"}'
+            )
+            for name in ("excluded", "other"):
+                path = plugin_root / "skills" / name
+                path.mkdir(parents=True)
+                (path / "SKILL.md").write_text(f"# {name}\n")
+            agent = config.Agent(name="demo", path=source)
+            plugin = config.Plugin(
+                path=plugin_root,
+                source="plugin",
+                marketplace="personal",
+                plugin="plugin",
+                enabled=True,
+                platforms=("claude",),
+                codex_exclude_skills=("excluded",),
+                platform_paths={"codex": plugin_root},
+            )
+            self.assertEqual(
+                adapters.agent_skill_warnings(agent, "codex", [], [plugin]),
+                [
+                    "агент 'demo': навык 'plugin:excluded' для codex не найден",
+                    "агент 'demo': навык 'plugin:other' для codex не поддерживает платформу",
+                ],
+            )
+
     def test_claude_plugin_generates_codex_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

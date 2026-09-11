@@ -31,6 +31,7 @@ import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -42,6 +43,8 @@ from textual.widgets import (
 )
 
 from . import config
+from .command_sdk.screen import TaskTableScreen
+from .command_sdk import load_provider
 from .sections import M_TARGETS
 from .submodule import add_submodule
 from .up import run_up
@@ -784,7 +787,7 @@ class CommandsPane(Container):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        # None — строка-разделитель между доступными и недоступными командами.
+        # None — заголовок категории или разделитель недоступных команд.
         self._row_map: list[config.Task | None] = []
 
     def compose(self) -> ComposeResult:
@@ -816,15 +819,23 @@ class CommandsPane(Container):
         # Доступные на этой ОС — сверху; недоступные — под разделитель, чтобы не мешались.
         available = [t for t in tasks if t.command]
         unavailable = [t for t in tasks if not t.command]
-        for t in available:
-            add_task(t)
-        if available and unavailable:
-            table.add_row("", "[dim]─── недоступные на этой ОС ───[/]", "")
-            self._row_map.append(None)
-        for t in unavailable:
-            add_task(t)
+        for batch in (available, unavailable):
+            if batch is unavailable and unavailable:
+                table.add_row("", "[dim]─── недоступные на этой ОС ───[/]", "")
+                self._row_map.append(None)
+            categories: dict[str, list[config.Task]] = {}
+            for t in batch:
+                categories.setdefault(t.category, []).append(t)
+            for category, entries in categories.items():
+                table.add_row("", Text(f"── {category} ──", style="bold cyan"), "")
+                self._row_map.append(None)
+                for t in entries:
+                    add_task(t)
         if self._row_map:
-            table.move_cursor(row=min(prev, len(self._row_map) - 1))
+            row = min(prev, len(self._row_map) - 1)
+            while row < len(self._row_map) - 1 and self._row_map[row] is None:
+                row += 1
+            table.move_cursor(row=row)
         st = self.query_one("#commands-status", Static)
         if warnings:
             st.update("[yellow]⚠ " + "; ".join(warnings[:3]) + "[/]")
@@ -858,6 +869,21 @@ class CommandsPane(Container):
         cmd = t.command
         if cmd is None:
             self._status(f"{t.title}: no variant for this OS ({sys.platform})", warn=True)
+            return
+        if t.provider:
+            try:
+                provider = load_provider(t.provider)
+                if t.sudo:
+                    with self.app.suspend():
+                        rc = subprocess.run(["sudo", "-v"], cwd=config.REPO_DIR).returncode
+                    if rc:
+                        self._status(f"{t.title}: sudo отменён или недоступен", warn=True)
+                        return
+                self.app.push_screen(TaskTableScreen(t, provider))
+            except KeyboardInterrupt:
+                self._status(f"{t.title}: запуск отменён", warn=True)
+            except Exception:
+                self.notify(traceback.format_exc(), severity="error", timeout=15)
             return
         # Выходим из TUI на время запуска: команда получает реальный терминал (sudo
         # сможет спросить пароль), после — возвращаемся и показываем результат. Запуск в

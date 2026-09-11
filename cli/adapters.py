@@ -195,6 +195,153 @@ def _agent_metadata(source: Path) -> tuple[dict[str, object], str]:
     return _split_frontmatter(source.read_text(errors="replace"))
 
 
+def _matching_plugin_refs(
+    providers: dict[str, set[str]], qualifier: str, skill_name: str
+) -> list[str]:
+    """Refs плагинов, подходящих к краткой или полной записи навыка."""
+    return [
+        ref
+        for ref, names in providers.items()
+        if skill_name in names and qualifier in (ref, ref.rpartition("@")[0])
+    ]
+
+
+def agent_skill_warnings(
+    agent: config.Agent,
+    platform: str,
+    skills: list[config.Skill],
+    plugins: list[config.Plugin],
+) -> list[str]:
+    """Проверить навыки из frontmatter агента против каталога платформы.
+
+    Обычные навыки доступны по имени. Навык плагина можно записать как
+    ``plugin:skill``; короткая форма допустима, только если она однозначна.
+    Предупреждения не блокируют установку агента: старый агент остаётся доступен,
+    а ошибка конфигурации видна при следующем ``up``.
+    """
+    try:
+        meta, _ = _agent_metadata(agent.path)
+    except OSError as exc:
+        return [f"агент '{agent.name}': не удалось прочитать skills: {exc}"]
+    declared = meta.get("skills")
+    if not isinstance(declared, list):
+        return []
+
+    codex_skill_flags = config.load_codex_flags("skills") if platform == "codex" else {}
+    codex_plugin_flags = config.load_codex_flags("plugins") if platform == "codex" else {}
+    loose_enabled = {
+        skill.name
+        for skill in skills
+        if skill.enabled and supports(skill, platform)
+        and codex_skill_flags.get(skill.name, True)
+    }
+    loose_disabled = {
+        skill.name
+        for skill in skills
+        if supports(skill, platform)
+        and (not skill.enabled or not codex_skill_flags.get(skill.name, True))
+    }
+    loose_other_platform = {
+        skill.name
+        for skill in skills
+        if not supports(skill, platform)
+    }
+    plugin_enabled: dict[str, set[str]] = {}
+    plugin_disabled: dict[str, set[str]] = {}
+    plugin_other_platform: dict[str, set[str]] = {}
+    warnings: list[str] = []
+    for plugin in plugins:
+        source_root = plugin.platform_paths.get(platform)
+        source_platform = platform
+        if platform == "codex" and source_root is None:
+            source_root = plugin.platform_paths.get("claude")
+            source_platform = "claude"
+        if source_root is None:
+            continue
+        try:
+            names = {
+                skill.name
+                for skill in _skill_roots(source_root, source_platform)
+                if platform != "codex" or skill.name not in plugin.codex_exclude_skills
+            }
+        except (OSError, ValueError) as exc:
+            warnings.append(
+                f"агент '{agent.name}': не удалось прочитать навыки плагина "
+                f"'{plugin.plugin}' для {platform}: {exc}"
+            )
+            continue
+        if not names:
+            continue
+        target = (
+            plugin_enabled
+            if (
+                plugin.enabled
+                and supports(plugin, platform)
+                and codex_plugin_flags.get(plugin.ref, True)
+            )
+            else plugin_other_platform if not supports(plugin, platform)
+            else plugin_disabled
+        )
+        target[plugin.ref] = names
+
+    for raw_name in declared:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        plugin_name, separator, skill_name = name.partition(":")
+        if separator:
+            enabled_refs = _matching_plugin_refs(
+                plugin_enabled, plugin_name, skill_name
+            )
+            if len(enabled_refs) == 1:
+                continue
+            if len(enabled_refs) > 1:
+                listed = ", ".join(f"{ref}:{skill_name}" for ref in enabled_refs)
+                warnings.append(
+                    f"агент '{agent.name}': навык '{name}' для {platform} "
+                    f"неоднозначен: {listed}"
+                )
+                continue
+            reason = (
+                "выключен"
+                if _matching_plugin_refs(plugin_disabled, plugin_name, skill_name)
+                else "не поддерживает платформу"
+                if _matching_plugin_refs(plugin_other_platform, plugin_name, skill_name)
+                else "не найден"
+            )
+            warnings.append(
+                f"агент '{agent.name}': навык '{name}' для {platform} {reason}"
+            )
+            continue
+
+        providers = set()
+        if name in loose_enabled:
+            providers.add(name)
+        providers.update(
+            f"{plugin}:{name}"
+            for plugin, names in plugin_enabled.items()
+            if name in names
+        )
+        if len(providers) == 1:
+            continue
+        if len(providers) > 1:
+            listed = ", ".join(sorted(providers))
+            warnings.append(
+                f"агент '{agent.name}': навык '{name}' для {platform} неоднозначен: {listed}"
+            )
+            continue
+        if name in loose_disabled or any(name in names for names in plugin_disabled.values()):
+            reason = "выключен"
+        elif name in loose_other_platform or any(
+            name in names for names in plugin_other_platform.values()
+        ):
+            reason = "не поддерживает платформу"
+        else:
+            reason = "не найден"
+        warnings.append(f"агент '{agent.name}': навык '{name}' для {platform} {reason}")
+    return warnings
+
+
 def render_codex_agent(source: Path) -> str:
     meta, body = _agent_metadata(source)
     name = str(meta.get("name") or source.stem).strip()

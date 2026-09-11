@@ -73,6 +73,14 @@ def install_agents(ctx: Ctx) -> None:
         ctx.errors += 1
 
     agents = [a for a in agents if adapters.supports(a, "claude")]
+    skills = config.load().skills
+    plugin_list, plugin_warnings = config._discover_plugins()
+    for w in plugin_warnings:
+        ctx.say(f"  ! {w}")
+        ctx.errors += 1
+    for agent in agents:
+        for warning in adapters.agent_skill_warnings(agent, "claude", skills, plugin_list):
+            ctx.say(f"  ! {warning}")
     wanted = {a.name + ".md" for a in agents}
 
     # Убрать наши устаревшие symlink'и (агент выпал из конфига/репо).

@@ -9,8 +9,6 @@ from __future__ import annotations
 # Дружественное имя раздела → (id домена в ContentSwitcher, опц. id вкладки AI).
 M_TARGETS: dict[str, tuple[str, str | None]] = {
     "ai": ("dom-ai", None),
-    "ai:claude": ("dom-ai", "tab-status"),
-    "ai:codex": ("dom-ai", "tab-status"),
     "agents": ("dom-ai", "tab-agents"),
     "skills": ("dom-ai", "tab-skills"),
     "plugins": ("dom-ai", "tab-plugins"),
@@ -18,5 +16,8 @@ M_TARGETS: dict[str, tuple[str, str | None]] = {
     "status": ("dom-ai", "tab-status"),
     "files": ("dom-files", None),
     "commands": ("dom-commands", None),
-    "scripts": ("dom-commands", None),
 }
+
+# Совместимость старых адресов; в автодополнении показываем основные имена.
+M_ALIASES = {"scripts": "commands", "ai:claude": "status", "ai:codex": "status"}
+M_TARGETS.update({alias: M_TARGETS[target] for alias, target in M_ALIASES.items()})

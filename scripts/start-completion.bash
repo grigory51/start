@@ -9,9 +9,10 @@
 
 _start_completion() {
     local cur subcmds sections
+    COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     subcmds="up settings seed manage m add-submodule completion"
-    sections="ai ai:claude ai:codex agents skills plugins mcp status files commands scripts"
+    sections="ai agents skills plugins mcp status files commands"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         COMPREPLY=( $(compgen -W "$subcmds" -- "$cur") )

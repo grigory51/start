@@ -77,6 +77,29 @@ class CodexConfigTests(unittest.TestCase):
                 },
             )
 
+    def test_missing_agent_skill_warns_without_dropping_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            source = root / "agent.md"
+            source.write_text(
+                "---\nname: demo\ndescription: Demo\ntools: Read\nskills:\n"
+                "  - missing\n---\n\nReview.\n"
+            )
+            agent = config.Agent(name="demo", path=source, description="Demo")
+            output = io.StringIO()
+            with (
+                patch.dict(os.environ, {"XDG_DATA_HOME": str(root / "data")}),
+                patch.object(config, "_discover_agents", return_value=([agent], [])),
+                patch.object(config, "load", return_value=config.ConfigResult()),
+                redirect_stdout(output),
+            ):
+                ctx = Ctx(dry_run=False, force=False)
+                installed = codex.install_agents(ctx, [])
+
+            self.assertEqual(set(installed), {"demo"})
+            self.assertEqual(ctx.errors, 0)
+            self.assertIn("навык 'missing' для codex не найден", output.getvalue())
+
     def test_merge_preserves_foreign_config(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             home = Path(raw)

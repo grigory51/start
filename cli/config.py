@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 import json
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,24 +109,42 @@ class McpServer:
 
 
 @dataclass
+class TaskFilter:
+    """Поле фильтра интерактивной задачи; options пуст для свободного ввода."""
+    name: str
+    label: str
+    default: str = ""
+    options: tuple[str, ...] = ()
+
+
+@dataclass
 class Task:
-    """Команда домена «Команды»: разовое действие на машине (запуск из TUI).
+    """Команда домена «Команды»: shell-действие или интерактивная таблица.
 
     run — команда по платформам (ключи sys.platform: darwin/linux/win32). На текущей
     ОС берётся run[sys.platform]; нет ключа под неё → команда недоступна здесь
-    (`command` == None). sudo — подсказка, что нужен root (для текста/подтверждения;
-    сам вызов sudo — часть команды).
+    (`command` == None). view — platform→module:function для async table provider.
+    Для run sudo является пометкой, сам sudo задаётся командой; для view менеджер
+    получает sudo timestamp и TaskContext запускает команды привилегированно.
     """
     name: str
     title: str
     description: str
     run: dict[str, str]        # platform (sys.platform) -> команда
     sudo: bool = False
+    view: dict[str, str] = field(default_factory=dict)
+    filters: list[TaskFilter] = field(default_factory=list)
+    refresh: float = 2.0
+    category: str = "Общее"
+
+    @property
+    def provider(self) -> str | None:
+        return self.view.get(sys.platform)
 
     @property
     def command(self) -> str | None:
-        """Команда для текущей ОС (None, если варианта под sys.platform нет)."""
-        cmd = self.run.get(sys.platform)
+        """Команда или provider для текущей ОС (None, если варианта нет)."""
+        cmd = self.run.get(sys.platform) or self.provider
         return cmd if isinstance(cmd, str) and cmd.strip() else None
 
 
@@ -755,8 +774,8 @@ def load_tasks() -> tuple[list[Task], list[str]]:
     """`[[commands.tasks]]` из config.toml: список Task домена «Команды» + warnings.
 
     Разовые действия на машине, запускаемые из TUI (не провижининг — up их не трогает).
-    Запись: name (обяз.), title (по умолчанию = name), description, [commands.tasks.run]
-    (dict platform→команда, обяз. непустой), sudo (bool-подсказка). Битые записи —
+    Запись: name (обяз.), title (по умолчанию = name), description, run или view
+    (platform→команда/provider), sudo, filters и refresh. Битые записи —
     предупреждение и пропуск. Секции нет — пустой список.
     """
     warnings: list[str] = []
@@ -769,10 +788,36 @@ def load_tasks() -> tuple[list[Task], list[str]]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
-        run = item.get("run")
-        if not name or not isinstance(run, dict) or not run:
+        run = item.get("run", {})
+        view = item.get("view", {})
+        if not name or not isinstance(run, dict) or not isinstance(view, dict) or not (run or view):
             warnings.append(
-                f"[[commands.tasks]] #{i}: нужен name и непустой [commands.tasks.run] — пропуск")
+                f"[[commands.tasks]] #{i}: нужен name и непустой run или view — пропуск")
+            continue
+        try:
+            refresh = float(item.get("refresh", 2))
+            if not 0.2 <= refresh <= 3600:
+                raise ValueError("refresh должен быть от 0.2 до 3600 секунд")
+            filters: list[TaskFilter] = []
+            for spec in item.get("filters", []):
+                key = spec["name"]
+                if not isinstance(key, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", key):
+                    raise ValueError("некорректное имя фильтра")
+                if any(f.name == key for f in filters):
+                    raise ValueError(f"повторный фильтр {key}")
+                options = spec.get("options", [])
+                if not isinstance(options, list) or any(not isinstance(o, str) for o in options):
+                    raise ValueError("options должен быть списком строк")
+                default = str(spec.get("default", ""))
+                if options and default not in options:
+                    raise ValueError(f"default фильтра {key} отсутствует в options")
+                filters.append(TaskFilter(key, str(spec.get("label", key)), default, tuple(options)))
+            if any(not isinstance(v, str) or not re.fullmatch(r"[a-zA-Z_][\w.]*:[a-zA-Z_]\w*", v) for v in view.values()):
+                raise ValueError("view должен содержать ссылки module:function")
+            if set(run) & set(view):
+                raise ValueError("run и view не могут задавать одну ОС одновременно")
+        except (KeyError, TypeError, ValueError) as exc:
+            warnings.append(f"задача '{name}': {exc} — пропуск")
             continue
         out.append(Task(
             name=name,
@@ -780,6 +825,8 @@ def load_tasks() -> tuple[list[Task], list[str]]:
             description=str(item.get("description") or "").strip(),
             run={str(k): str(v) for k, v in run.items()},
             sudo=bool(item.get("sudo", False)),
+            view=dict(view), filters=filters, refresh=refresh,
+            category=str(item.get("category") or "Общее").strip() or "Общее",
         ))
     return out, warnings
 

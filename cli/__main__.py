@@ -99,8 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
         "manage", aliases=["m"],
         help="TUI: домены AI/Files/Команды (алиас m; быстрый переход — `m skills`, `m plugins`, …)")
     manage.add_argument("section", nargs="?", default=None,
-                        help="открыть сразу на разделе: scripts/commands, files, "
-                             "ai, ai:claude, ai:codex, agents, skills, plugins, mcp")
+                        help="открыть сразу на разделе: commands, files, "
+                             "ai, agents, skills, plugins, mcp, status")
     manage.set_defaults(func=_cmd_manage)
 
     addsub = sub.add_parser(

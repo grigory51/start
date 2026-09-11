@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 
 from .config import REPO_DIR
-from .sections import M_TARGETS
+from .sections import M_ALIASES, M_TARGETS
 
 COMPLETION_PATH = REPO_DIR / "scripts" / "start-completion.bash"
 
@@ -31,6 +31,7 @@ _TEMPLATE = """\
 
 _start_completion() {{
     local cur subcmds sections
+    COMPREPLY=()
     cur="${{COMP_WORDS[COMP_CWORD]}}"
     subcmds="{subcmds}"
     sections="{sections}"
@@ -57,7 +58,7 @@ def generate() -> str:
     sub_action = next(a for a in parser._actions
                       if isinstance(a, argparse._SubParsersAction))
     subcmds = " ".join(sub_action.choices)   # включает алиасы (m) и completion
-    sections = " ".join(M_TARGETS)
+    sections = " ".join(name for name in M_TARGETS if name not in M_ALIASES)
     return _TEMPLATE.format(subcmds=subcmds, sections=sections)
 
 

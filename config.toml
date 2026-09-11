@@ -79,7 +79,13 @@ enabled = ["gravity-ui"]
 
 [[ai.skills]]
 path = "contrib/threejs-game-skills/skills"
-enabled = ["threejs-debug-profiler"]
+enabled = ["threejs-debug-profiler", "threejs-game-ui-designer"]
+
+# Claude использует те же skills напрямую: плагин Game Studio имеет только Codex manifest.
+[[ai.skills]]
+path = "contrib/openai-plugins/plugins/game-studio/skills"
+enabled = ["*"]
+platforms = ["claude"]
 
 # --- Агенты -------------------------------------------------------------------
 #
@@ -295,13 +301,14 @@ target = "~/Library/Application Support/OrcaSlicer/user/default/process"
 #   refresh     — период обновления view в секундах (по умолчанию 2).
 #   category    — заголовок группы в таблице (по умолчанию «Общее»).
 #   filters     — поля name/label/default, options для выбора вместо свободного ввода.
-# Контракт provider и примеры: docs/interactive-tasks.md.
+# Контракт provider и примеры: .agents/skills/start-add-interactive-task/SKILL.md.
 #   [commands.tasks.run] — команда по платформам; ключи по sys.platform
 #                 (darwin/linux/win32). На текущей ОС берётся run[sys.platform];
 #                 нет ключа под неё → команда недоступна здесь (TUI пометит).
 
 [[commands.tasks]]
 name = "flush-dns"
+category = "Сеть"
 title = "Сбросить DNS-кеш"
 description = "Очистить кеш DNS-резолвера операционной системы."
 sudo = true
@@ -314,6 +321,7 @@ darwin = "sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
 # и `brew install dnsmasq`; разовое предскачивание дистрибутивов — через webUI netboot.xyz.
 [[commands.tasks]]
 name = "pxe-netboot"
+category = "Сеть"
 title = "PXE-загрузка (локальный netboot.xyz)"
 description = "Локальный PXE-сервер для установки машины по сети без интернета на ней. UEFI+BIOS. Ctrl-C — стоп."
 sudo = true
@@ -325,6 +333,7 @@ darwin = 'bash "$REPO/scripts/pxe/pxe-netboot.sh"'
 # сети/модема, dotfiles. provision.sh <role> прогоняет роль ЛОКАЛЬНО (-c local). Только Linux.
 [[commands.tasks]]
 name = "provision-netbook"
+category = "Система"
 title = "Provision: netbook"
 description = "Ansible-роль netbook локально: терминал + Wi-Fi (nmtui) + net-debug + dotfiles на headless-Debian. Запускать на нетбуке."
 sudo = true
@@ -335,15 +344,44 @@ linux = 'bash "$REPO/scripts/provision.sh" netbook'
 # число — фильтр по порту. Замена алиасу `sudo lsof -iTCP -sTCP:LISTEN -n -P` + grep.
 [[commands.tasks]]
 name = "tcp-listen"
-title = "Слушающие TCP-порты"
-description = "lsof по слушающим TCP-портам. Спрашивает порт: Enter — все, число — фильтр по порту."
+category = "Сеть"
+title = "Listening ports"
+description = "Живая таблица lsof: TCP LISTEN и UDP-сокеты, фильтры порта и протокола. q — назад."
 sudo = true
-[commands.tasks.run]
-darwin = 'bash "$REPO/scripts/tcp-listen.sh"'
-linux = 'bash "$REPO/scripts/tcp-listen.sh"'
+refresh = 2
+[commands.tasks.view]
+darwin = "cli.commands.listening_ports:snapshot"
+linux = "cli.commands.listening_ports:snapshot"
+[[commands.tasks.filters]]
+name = "port"
+label = "Порт"
+[[commands.tasks.filters]]
+name = "protocol"
+label = "Протокол"
+default = "tcp"
+options = ["tcp", "udp", "all"]
+
+[[commands.tasks]]
+name = "nettop"
+category = "Сеть"
+title = "Сеть по приложениям"
+description = "Живая таблица nettop: приложение или PID, TCP/UDP, трафик соединений. q — назад."
+sudo = true
+refresh = 2
+[commands.tasks.view]
+darwin = "cli.commands.network_processes:snapshot"
+[[commands.tasks.filters]]
+name = "application"
+label = "Приложение или PID"
+[[commands.tasks.filters]]
+name = "protocol"
+label = "Протокол"
+default = "tcp"
+options = ["tcp", "udp", "all"]
 
 [[commands.tasks]]
 name = "codex-session-dump"
+category = "Codex"
 title = "Экспорт сессии Codex"
 description = "Сохранить диалог выбранной Codex-сессии в читаемый Markdown."
 [commands.tasks.run]
@@ -352,6 +390,7 @@ linux = 'python3 "$REPO/scripts/codex-session-dump.py"'
 
 [[commands.tasks]]
 name = "codex-process-tree"
+category = "Codex"
 title = "Дерево процессов Codex"
 description = "Показать процессы Codex и их дочерние процессы с CPU, памятью и временем работы."
 [commands.tasks.run]
@@ -361,6 +400,7 @@ linux = 'bash "$REPO/scripts/codex-process-tree.sh"'
 
 [[commands.tasks]]
 name = "power-off-after-print"
+category = "3D-печать"
 title = "Выключить принтер после печати"
 description = "Принтер 172.22.222.30: дождаться завершения текущей печати и остывания сопла ниже 50 °C, стола ниже 40 °C, затем выключить питание. Запускать во время печати; Ctrl-C — отмена ожидания."
 [commands.tasks.run]

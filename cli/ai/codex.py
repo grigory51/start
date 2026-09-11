@@ -110,9 +110,14 @@ def install_agents(
         ctx.errors += 1
     sources: dict[str, tuple[Path, str]] = {}
     catalog_count = 0
+    skills = config.load().skills
     for agent in agents:
         if not adapters.supports(agent, "codex"):
             continue
+        for warning in adapters.agent_skill_warnings(
+            agent, "codex", skills, plugin_list
+        ):
+            ctx.say(f"  ! {warning}")
         try:
             if ctx.dry_run:
                 adapters.render_codex_agent(agent.path)
