@@ -290,7 +290,12 @@ target = "~/Library/Application Support/OrcaSlicer/user/default/process"
 #   name        — идентификатор.
 #   title       — отображаемое имя.
 #   description — что делает.
-#   sudo        — (опц.) нужен root: пометка в TUI (сам sudo — часть команды).
+#   sudo        — для run: пометка (sudo внутри команды); для view: авторизация менеджером.
+#   view        — platform → module:function, async provider живой таблицы.
+#   refresh     — период обновления view в секундах (по умолчанию 2).
+#   category    — заголовок группы в таблице (по умолчанию «Общее»).
+#   filters     — поля name/label/default, options для выбора вместо свободного ввода.
+# Контракт provider и примеры: docs/interactive-tasks.md.
 #   [commands.tasks.run] — команда по платформам; ключи по sys.platform
 #                 (darwin/linux/win32). На текущей ОС берётся run[sys.platform];
 #                 нет ключа под неё → команда недоступна здесь (TUI пометит).
@@ -431,3 +436,8 @@ plugin = "hyperframes"
   name = "ffmpeg"
   check = "command -v ffmpeg"
   hint = "brew install ffmpeg"
+
+[[ai.skills]]
+path = "contrib/skills-for-antigravity/skills"
+enabled = ["game-ui-design"]
+exclude = ["brand-positioning"]

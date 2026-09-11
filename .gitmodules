@@ -76,3 +76,6 @@
 [submodule "contrib/hyperframes"]
 	path = contrib/hyperframes
 	url = https://github.com/heygen-com/hyperframes
+[submodule "contrib/skills-for-antigravity"]
+	path = contrib/skills-for-antigravity
+	url = https://github.com/omer-metin/skills-for-antigravity
