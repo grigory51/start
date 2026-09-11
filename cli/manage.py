@@ -1023,6 +1023,8 @@ class ManagerApp(App):
             for dom, label in _DOMAINS)
 
     def action_toggle_domain(self) -> None:
+        if any(isinstance(screen, TaskTableScreen) for screen in self.screen_stack):
+            return
         cs = self.query_one("#domains", ContentSwitcher)
         ids = [dom for dom, _ in _DOMAINS]
         cs.current = ids[(ids.index(cs.current) + 1) % len(ids)]

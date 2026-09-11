@@ -4,14 +4,15 @@ import asyncio
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from textual.app import App
 from textual.widgets import DataTable, Input, Static
 
 from cli.config import Task, TaskFilter
-from cli.command_sdk import TableSnapshot, TaskContext, load_provider
-from cli.command_sdk.screen import TaskTableScreen
+from cli.manage import ManagerApp
+from cli.command_sdk import RowAction, TableSnapshot, TaskContext, load_provider
+from cli.command_sdk.screen import ConfirmActionScreen, TaskTableScreen
 
 
 class SdkTests(unittest.TestCase):
@@ -133,3 +134,60 @@ class TableScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIn('bad filter', str(screen.query_one('#task-status', Static).content))
             self.assertIs(app.screen, screen)
+
+class RowActionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_action_requires_confirmation_and_captures_selected_row(self) -> None:
+        handler = AsyncMock()
+
+        async def provider(context, filters):
+            return TableSnapshot(('PID',), [('123',)], actions=(
+                RowAction('k', 'Terminate', handler, 'Terminate {PID}?'),
+            ))
+
+        app = App()
+        async with app.run_test() as pilot:
+            screen = TaskTableScreen(Task('test', 'Test', '', {}), provider)
+            app.push_screen(screen)
+            await pilot.pause()
+            await pilot.press('k')
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ConfirmActionScreen)
+            handler.assert_not_awaited()
+            await pilot.press('escape')
+            await pilot.pause()
+            handler.assert_not_awaited()
+            self.assertIs(app.screen, screen)
+            await pilot.press('k')
+            await pilot.pause()
+            await pilot.press('y')
+            await pilot.pause()
+            handler.assert_awaited_once_with(screen.context, {'PID': '123'})
+            self.assertIs(app.screen, screen)
+
+class ManagerNavigationApp(App):
+    BINDINGS = ManagerApp.BINDINGS
+    action_toggle_domain = ManagerApp.action_toggle_domain
+
+
+class CommandNavigationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_manager_shortcuts_do_not_act_inside_command(self) -> None:
+        calls = []
+
+        async def provider(context, filters):
+            calls.append(filters)
+            return TableSnapshot(('PID',), [('123',)])
+
+        app = ManagerNavigationApp()
+        async with app.run_test() as pilot:
+            original = app.screen
+            screen = TaskTableScreen(Task('test', 'Test', '', {}, refresh=3600), provider)
+            app.push_screen(screen)
+            await pilot.pause()
+            before = len(calls)
+            await pilot.press('f2', 'ctrl+r')
+            await pilot.pause()
+            self.assertIs(app.screen, screen)
+            self.assertEqual(len(calls), before)
+            await pilot.press('escape')
+            await pilot.pause()
+            self.assertIs(app.screen, original)

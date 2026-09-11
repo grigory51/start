@@ -14,10 +14,20 @@ from .. import config
 
 
 @dataclass
+class RowAction:
+    """Действие над выбранной строкой; confirmation форматируется по колонкам."""
+    key: str
+    label: str
+    handler: Callable[[TaskContext, dict[str, str]], Awaitable[None]]
+    confirmation: str
+
+
+@dataclass
 class TableSnapshot:
     """Один снимок таблицы: колонки и строки одинаковой ширины."""
     columns: tuple[str, ...]
     rows: list[tuple[str, ...]]
+    actions: tuple[RowAction, ...] = ()
 
     def __post_init__(self) -> None:
         if any(len(row) != len(self.columns) for row in self.rows):
@@ -83,4 +93,3 @@ def load_provider(reference: str) -> Provider:
     if not inspect.iscoroutinefunction(provider):
         raise TypeError(f"{reference} должен быть async provider-функцией")
     return provider
-

@@ -1,9 +1,22 @@
 """Listening ports: TCP LISTEN и UDP-сокеты через lsof."""
 from __future__ import annotations
 
-from ..command_sdk import TableSnapshot, TaskContext
+from ..command_sdk import RowAction, TableSnapshot, TaskContext
 
 LISTENING_COLUMNS = ("PID", "PROCESS", "PROTOCOL", "ADDRESS", "PORT")
+
+
+async def terminate_process(context: TaskContext, row: dict[str, str]) -> None:
+    pid = row['PID']
+    if not pid.isascii() or not pid.isdecimal() or int(pid) <= 1:
+        raise ValueError("Нужен PID отдельного процесса больше 1")
+    if not context.sudo:
+        raise ValueError("Завершение процесса требует sudo")
+    current = await snapshot(context, {'port': row['PORT'], 'protocol': row['PROTOCOL'].lower()})
+    expected = tuple(row[column] for column in LISTENING_COLUMNS)
+    if expected not in current.rows:
+        raise ValueError("Процесс или сокет изменился. Обновите таблицу и выберите строку заново.")
+    await context.run("kill", "-TERM", pid)
 
 
 def _port(filters: dict[str, str]) -> str:
@@ -86,4 +99,8 @@ async def snapshot(
     return TableSnapshot(
         columns=LISTENING_COLUMNS,
         rows=[row for snapshot in snapshots for row in snapshot.rows],
+        actions=(RowAction(
+            key="k", label="Завершить процесс", handler=terminate_process,
+            confirmation="Завершить {PROCESS} (PID {PID})?\nСигнал SIGTERM от root.",
+        ),),
     )

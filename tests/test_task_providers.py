@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock
+
+from cli.command_sdk import TaskContext
 
 from cli.commands import listening_ports, network_processes
 
@@ -143,5 +146,24 @@ class TaskProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("-p", arguments)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TerminateProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_terminate_uses_selected_pid_and_sudo_context(self) -> None:
+        context = TaskContext(sudo=True)
+        context.run = AsyncMock(side_effect=[LSOF_OUTPUT, ''])
+        row = dict(zip(listening_ports.LISTENING_COLUMNS, ('123', 'Python', 'TCP', '127.0.0.1', '8080')))
+        await listening_ports.terminate_process(context, row)
+        self.assertEqual(context.run.await_count, 2)
+        context.run.assert_awaited_with('kill', '-TERM', '123')
+        for pid in ('0', '-1', '1', '123; echo bad'):
+            with self.assertRaises(ValueError):
+                await listening_ports.terminate_process(context, {'PID': pid})
+        with self.assertRaises(ValueError):
+            await listening_ports.terminate_process(TaskContext(), {'PID': '123'})
+
+    async def test_changed_process_is_not_signalled(self) -> None:
+        context = TaskContext(sudo=True)
+        context.run = AsyncMock(return_value=LSOF_OUTPUT.replace('cPython', 'cOther'))
+        row = dict(zip(listening_ports.LISTENING_COLUMNS, ('123', 'Python', 'TCP', '127.0.0.1', '8080')))
+        with self.assertRaisesRegex(ValueError, 'изменился'):
+            await listening_ports.terminate_process(context, row)
+        self.assertEqual(context.run.await_count, 1)
