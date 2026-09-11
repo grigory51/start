@@ -452,7 +452,7 @@ enabled = ["frontend-design"]
 
 [[ai.skills]]
 path = "contrib/taste-skill/skills"
-enabled = []
+enabled = ["taste-skill"]
 
 [[ai.skills]]
 path = "contrib/brand-building-skills/skills"
