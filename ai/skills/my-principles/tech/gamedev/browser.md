@@ -1,6 +1,8 @@
 # Browser gamedev (2D и 3D)
 
-> Стек-специфика браузерных игр. Общие правила TypeScript и UI — в [frontend.md](frontend.md).
+> Стек-специфика браузерных игр. Общие правила TypeScript и UI — в [frontend.md](../frontend.md).
+
+Для Unity/C# используй [unity.md](unity.md); браузерные требования ниже к Unity не применяются.
 
 ## Выбор runtime
 

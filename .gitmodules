@@ -79,3 +79,6 @@
 [submodule "contrib/skills-for-antigravity"]
 	path = contrib/skills-for-antigravity
 	url = https://github.com/omer-metin/skills-for-antigravity
+[submodule "contrib/awesome-gamedev-agent-skills"]
+	path = contrib/awesome-gamedev-agent-skills
+	url = https://github.com/gamedev-skills/awesome-gamedev-agent-skills
