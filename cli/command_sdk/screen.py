@@ -13,10 +13,36 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Input, Label, Select, Static
+from textual.widgets import DataTable, Input, Label, Select, Static, TextArea
 
 from .. import config
-from . import Provider, RowAction, TableSnapshot, TaskContext
+from . import Provider, RowAction, RowDetails, TableSnapshot, TaskContext
+
+
+class RowDetailsScreen(ModalScreen[None]):
+    BINDINGS = [Binding("escape,q", "close", "Закрыть", priority=True)]
+    DEFAULT_CSS = """
+    RowDetailsScreen { align: center middle; background: $background 70%; }
+    RowDetailsScreen #details-panel { width: 90%; height: 85%; border: round $primary; padding: 1; }
+    RowDetailsScreen Static { height: auto; }
+    RowDetailsScreen TextArea { height: 1fr; margin: 1 0; }
+    """
+
+    def __init__(self, details: RowDetails) -> None:
+        super().__init__()
+        self.details = details
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="details-panel"):
+            yield Static(self.details.title, markup=False)
+            yield TextArea(self.details.text, read_only=True, soft_wrap=True, show_line_numbers=False)
+            yield Static("Esc / q — к таблице", markup=False)
+
+    def on_mount(self) -> None:
+        self.query_one(TextArea).focus()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 class ConfirmActionScreen(ModalScreen[bool]):
@@ -135,7 +161,7 @@ class TaskTableScreen(Screen):
                 table.scroll_to(scroll.x, scroll.y, animate=False)
             self.query_one("#task-status", Static).update(
                 f"{len(snapshot.rows)} строк · {datetime.now():%H:%M:%S} · "
-                "Tab — фильтры · Enter — таблица · Esc — закрыть"
+                "Tab — фильтры · Esc — закрыть"
                 + "".join(f" · {action.key} — {action.label}" for action in snapshot.actions)
             )
         except asyncio.CancelledError:
@@ -159,29 +185,41 @@ class TaskTableScreen(Screen):
         self.app.pop_screen()
 
     def on_key(self, event: Key) -> None:
+        if event.key != "enter" and self.start_row_action(event.key):
+            event.stop()
+            event.prevent_default()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        self.start_row_action("enter")
+
+    def start_row_action(self, key: str) -> bool:
         table = self.query_one(DataTable)
         if not table.has_focus or self.action_running or not self.snapshot or not self.snapshot.rows:
-            return
+            return False
         for action in self.snapshot.actions:
-            if event.key == action.key:
-                event.stop()
-                event.prevent_default()
+            if key == action.key:
                 row = dict(zip(self.snapshot.columns, self.snapshot.rows[table.cursor_row]))
                 self.action_running = True
                 self.generation += 1
                 self.workers.cancel_group(self, "task-refresh")
                 self.fetching = False
                 self.run_row_action(action, row)
-                break
+                return True
+        return False
 
     @work(group="row-action", exclusive=True, exit_on_error=False)
     async def run_row_action(self, action: RowAction, row: dict[str, str]) -> None:
         try:
-            confirmed = await self.app.push_screen_wait(
-                ConfirmActionScreen(action.confirmation.format_map(row))
-            )
-            if confirmed:
-                await action.handler(self.context, row)
+            if action.confirmation is not None:
+                confirmed = await self.app.push_screen_wait(
+                    ConfirmActionScreen(action.confirmation.format_map(row))
+                )
+                if not confirmed:
+                    return
+            result = await action.handler(self.context, row)
+            if isinstance(result, RowDetails):
+                await self.app.push_screen_wait(RowDetailsScreen(result))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

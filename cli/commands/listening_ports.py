@@ -1,9 +1,30 @@
 """Listening ports: TCP LISTEN и UDP-сокеты через lsof."""
 from __future__ import annotations
 
-from ..command_sdk import RowAction, TableSnapshot, TaskContext
+from ..command_sdk import RowAction, RowDetails, TableSnapshot, TaskContext
 
 LISTENING_COLUMNS = ("PID", "PROCESS", "PROTOCOL", "ADDRESS", "PORT")
+
+
+async def process_details(context: TaskContext, row: dict[str, str]) -> RowDetails:
+    pid = row['PID']
+    if not pid.isascii() or not pid.isdecimal() or int(pid) < 1:
+        raise ValueError("Некорректный PID процесса")
+    output = await context.run(
+        "ps", "-ww", "-p", pid, "-o",
+        "pid=,ppid=,user=,stat=,pcpu=,pmem=,rss=,vsz=,etime=,time=,args=",
+        allowed_codes=(0, 1),
+    )
+    title = f"Процесс PID {pid}"
+    if not output.strip():
+        return RowDetails(title, "Процесс завершился или больше недоступен.")
+    values = output.strip().split(maxsplit=10)
+    if len(values) != 11 or values[0] != pid:
+        raise ValueError(f"Неожиданный вывод ps для PID {pid}: {output}")
+    labels = ("PID", "Родительский PID", "Пользователь", "Состояние", "CPU, %",
+              "Память, %", "RSS, КиБ", "Виртуальная память, КиБ", "Время работы", "CPU-время")
+    text = "\n".join(f"{label}: {value}" for label, value in zip(labels, values[:10]))
+    return RowDetails(title, text + "\n\nКоманда запуска:\n" + values[10])
 
 
 async def terminate_process(context: TaskContext, row: dict[str, str]) -> None:
@@ -99,7 +120,7 @@ async def snapshot(
     return TableSnapshot(
         columns=LISTENING_COLUMNS,
         rows=[row for snapshot in snapshots for row in snapshot.rows],
-        actions=(RowAction(
+        actions=(RowAction("enter", "О процессе", process_details), RowAction(
             key="k", label="Завершить процесс", handler=terminate_process,
             confirmation="Завершить {PROCESS} (PID {PID})?\nСигнал SIGTERM от root.",
         ),),

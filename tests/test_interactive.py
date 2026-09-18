@@ -7,12 +7,12 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from textual.app import App
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input, Static, TextArea
 
 from cli.config import Task, TaskFilter
 from cli.manage import ManagerApp
-from cli.command_sdk import RowAction, TableSnapshot, TaskContext, load_provider
-from cli.command_sdk.screen import ConfirmActionScreen, TaskTableScreen
+from cli.command_sdk import RowAction, RowDetails, TableSnapshot, TaskContext, load_provider
+from cli.command_sdk.screen import ConfirmActionScreen, RowDetailsScreen, TaskTableScreen
 
 
 class SdkTests(unittest.TestCase):
@@ -191,3 +191,45 @@ class CommandNavigationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press('escape')
             await pilot.pause()
             self.assertIs(app.screen, original)
+
+
+class ProcessDetailsScreenTests(unittest.IsolatedAsyncioTestCase):
+    async def test_enter_opens_details_and_escape_returns_to_same_table(self) -> None:
+        details = RowDetails('PID 456', '/path with spaces/python ' + '--argument ' * 100)
+        handler = AsyncMock(return_value=details)
+
+        async def provider(context, filters):
+            return TableSnapshot(('PID',), [('123',), ('456',)], actions=(
+                RowAction('enter', 'Details', handler),
+            ))
+
+        app = ManagerNavigationApp()
+        async with app.run_test() as pilot:
+            screen = TaskTableScreen(Task('test', 'Test', '', {}, refresh=0.2,
+                                         filters=[TaskFilter('port', 'Port')]), provider)
+            app.push_screen(screen)
+            await pilot.pause()
+            table = screen.query_one(DataTable)
+            field = screen.query_one(Input)
+            field.focus()
+            await pilot.press('enter')
+            await pilot.pause()
+            self.assertIs(app.screen, screen)
+            handler.assert_not_awaited()
+            table.move_cursor(row=1)
+            await pilot.press('enter')
+            await pilot.pause()
+            self.assertIsInstance(app.screen, RowDetailsScreen)
+            handler.assert_awaited_once_with(screen.context, {'PID': '456'})
+            self.assertEqual(app.screen.query_one(TextArea).text, details.text)
+            self.assertTrue(screen.action_running)
+            await pilot.press('f2', 'escape')
+            await pilot.pause()
+            self.assertIs(app.screen, screen)
+            self.assertFalse(screen.action_running)
+            self.assertEqual(table.cursor_row, 1)
+            await pilot.press('enter')
+            await pilot.pause()
+            await pilot.press('q')
+            await pilot.pause()
+            self.assertIs(app.screen, screen)

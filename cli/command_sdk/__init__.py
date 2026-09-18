@@ -14,12 +14,19 @@ from .. import config
 
 
 @dataclass
+class RowDetails:
+    """Текстовый результат действия для просмотра в отдельной модалке."""
+    title: str
+    text: str
+
+
+@dataclass
 class RowAction:
     """Действие над выбранной строкой; confirmation форматируется по колонкам."""
     key: str
     label: str
-    handler: Callable[[TaskContext, dict[str, str]], Awaitable[None]]
-    confirmation: str
+    handler: Callable[[TaskContext, dict[str, str]], Awaitable[RowDetails | None]]
+    confirmation: str | None = None
 
 
 @dataclass

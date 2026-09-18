@@ -167,3 +167,25 @@ class TerminateProcessTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'изменился'):
             await listening_ports.terminate_process(context, row)
         self.assertEqual(context.run.await_count, 1)
+
+
+class ProcessDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_command_and_metrics(self) -> None:
+        command = '/path with spaces/.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8765'
+        context = FakeContext(' 99551 1 ozhegov Ss 0.0 0.1 13248 442485584 01:23:45 1:35.09 ' + command + '\n')
+        details = await listening_ports.process_details(context, {'PID': '99551'})
+        self.assertIn(command, details.text)
+        self.assertIn('Пользователь: ozhegov', details.text)
+        self.assertIn('RSS, КиБ: 13248', details.text)
+        arguments, codes = context.calls[0]
+        self.assertEqual(arguments[:4], ('ps', '-ww', '-p', '99551'))
+        self.assertEqual(codes, (0, 1))
+
+    async def test_exited_process_and_invalid_pid(self) -> None:
+        details = await listening_ports.process_details(FakeContext(''), {'PID': '123'})
+        self.assertIn('завершился', details.text)
+        context = FakeContext()
+        for pid in ('0', '-1', '123,456', '123;echo bad'):
+            with self.assertRaises(ValueError):
+                await listening_ports.process_details(context, {'PID': pid})
+        self.assertEqual(context.calls, [])
