@@ -11,7 +11,7 @@ from textual.widgets import DataTable, Input, Static, TextArea
 
 from cli.config import Task, TaskFilter
 from cli.manage import ManagerApp
-from cli.command_sdk import RowAction, RowDetails, TableSnapshot, TaskContext, load_provider
+from cli.command_sdk import RowAction, RowDetails, RowTable, TableSnapshot, TaskContext, load_provider
 from cli.command_sdk.screen import ConfirmActionScreen, RowDetailsScreen, TaskTableScreen
 
 
@@ -233,3 +233,47 @@ class ProcessDetailsScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press('q')
             await pilot.pause()
             self.assertIs(app.screen, screen)
+
+
+class NestedTableTests(unittest.IsolatedAsyncioTestCase):
+    async def test_nested_table_pauses_parent_and_returns_one_level(self) -> None:
+        details = AsyncMock(return_value=RowDetails('Process', 'Full command'))
+        child_provider = AsyncMock(return_value=TableSnapshot(
+            ('PID',), [('101',)], (RowAction('enter', 'Details', details),),
+        ))
+        open_child = AsyncMock(return_value=RowTable(
+            Task('child', 'Session tree', '', {}, refresh=0.2), child_provider,
+        ))
+        parent_provider = AsyncMock(return_value=TableSnapshot(
+            ('PID', 'CWD'), [('100', '/project')], (RowAction('enter', 'Open', open_child),),
+        ))
+        app = ManagerNavigationApp()
+        async with app.run_test() as pilot:
+            original = app.screen
+            parent = TaskTableScreen(Task('parent', 'Sessions', '', {}, refresh=0.2), parent_provider)
+            app.push_screen(parent)
+            await pilot.pause()
+            await pilot.press('enter')
+            await pilot.pause()
+            child = app.screen
+            self.assertIsInstance(child, TaskTableScreen)
+            self.assertIsNot(child, parent)
+            self.assertTrue(parent.action_running)
+            calls = parent_provider.await_count
+            await pilot.pause(0.4)
+            self.assertEqual(parent_provider.await_count, calls)
+            self.assertGreater(child_provider.await_count, 1)
+            await pilot.press('enter')
+            await pilot.pause()
+            self.assertIsInstance(app.screen, RowDetailsScreen)
+            await pilot.press('escape')
+            await pilot.pause()
+            self.assertIs(app.screen, child)
+            await pilot.press('f2', 'q')
+            await pilot.pause()
+            self.assertIs(app.screen, parent)
+            self.assertFalse(parent.action_running)
+            self.assertGreater(parent_provider.await_count, calls)
+            await pilot.press('escape')
+            await pilot.pause()
+            self.assertIs(app.screen, original)

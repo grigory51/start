@@ -16,7 +16,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Input, Label, Select, Static, TextArea
 
 from .. import config
-from . import Provider, RowAction, RowDetails, TableSnapshot, TaskContext
+from . import Provider, RowAction, RowDetails, RowTable, TableSnapshot, TaskContext
 
 
 class RowDetailsScreen(ModalScreen[None]):
@@ -66,7 +66,7 @@ class ConfirmActionScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class TaskTableScreen(Screen):
+class TaskTableScreen(Screen[None]):
     """Экран не знает команд и семантики фильтров; это ответственность provider."""
 
     BINDINGS = [
@@ -182,7 +182,7 @@ class TaskTableScreen(Screen):
         self.ready = False
         self.workers.cancel_group(self, "task-refresh")
         self.workers.cancel_group(self, "row-action")
-        self.app.pop_screen()
+        self.dismiss(None)
 
     def on_key(self, event: Key) -> None:
         if event.key != "enter" and self.start_row_action(event.key):
@@ -220,6 +220,8 @@ class TaskTableScreen(Screen):
             result = await action.handler(self.context, row)
             if isinstance(result, RowDetails):
                 await self.app.push_screen_wait(RowDetailsScreen(result))
+            elif isinstance(result, RowTable):
+                await self.app.push_screen_wait(TaskTableScreen(result.task, result.provider))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

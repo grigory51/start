@@ -391,11 +391,25 @@ linux = 'python3 "$REPO/scripts/codex-session-dump.py"'
 [[commands.tasks]]
 name = "codex-process-tree"
 category = "Codex"
-title = "Дерево процессов Codex"
-description = "Показать процессы Codex и их дочерние процессы с CPU, памятью и временем работы."
-[commands.tasks.run]
-darwin = 'bash "$REPO/scripts/codex-process-tree.sh"'
-linux = 'bash "$REPO/scripts/codex-process-tree.sh"'
+title = "Сессии Codex"
+description = "Сессии с CWD и ресурсами; Enter открывает дерево процессов выбранной сессии."
+refresh = 2
+[commands.tasks.view]
+darwin = "cli.commands.codex_process_tree:snapshot"
+linux = "cli.commands.codex_process_tree:snapshot"
+[[commands.tasks.filters]]
+name = "cwd"
+label = "CWD содержит"
+[[commands.tasks.filters]]
+name = "sort"
+label = "Сортировка"
+default = "MEM %"
+options = ["PID", "CWD", "PROCESSES", "CPU %", "MEM %", "ELAPSED"]
+[[commands.tasks.filters]]
+name = "order"
+label = "Порядок"
+default = "desc"
+options = ["asc", "desc"]
 
 
 [[commands.tasks]]

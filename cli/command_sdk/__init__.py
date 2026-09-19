@@ -25,7 +25,7 @@ class RowAction:
     """Действие над выбранной строкой; confirmation форматируется по колонкам."""
     key: str
     label: str
-    handler: Callable[[TaskContext, dict[str, str]], Awaitable[RowDetails | None]]
+    handler: Callable[[TaskContext, dict[str, str]], Awaitable[RowDetails | RowTable | None]]
     confirmation: str | None = None
 
 
@@ -92,6 +92,13 @@ class TaskContext:
 
 
 Provider = Callable[[TaskContext, dict[str, str]], Awaitable[TableSnapshot]]
+
+
+@dataclass
+class RowTable:
+    """Вложенная обновляемая таблица, открываемая действием над строкой."""
+    task: config.Task
+    provider: Provider
 
 
 def load_provider(reference: str) -> Provider:
