@@ -122,7 +122,14 @@ class CodexProcessTreeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/work/project', child.task.title)
         with patch.object(context, 'run', AsyncMock(side_effect=['100\n200\n', PROCESSES])):
             result = await child.provider(context, {'kind': 'mcp'})
-        self.assertEqual([row[1] for row in result.rows], ['102', '103'])
+        self.assertEqual(result.columns, ('PID', 'PPID', 'CPU %', 'MEM %', 'ELAPSED', 'STATE', 'TYPE', 'COMMAND'))
+        self.assertEqual([row[0] for row in result.rows], ['102', '103'])
+        with patch('cli.commands.codex_process_tree.sys.platform', 'darwin'), patch.object(
+            context, 'run', AsyncMock(side_effect=['100\n200\n', PROCESSES, 'p100\nn/work/project\n'])
+        ):
+            details = await result.actions[0].handler(context, dict(zip(result.columns, result.rows[0])))
+        self.assertIn('Codex 100', details.title)
+        self.assertIn('freecad_mcp_server.py', details.text)
 
     async def test_empty_sessions_do_not_query_cwd(self) -> None:
         context = TaskContext()

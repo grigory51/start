@@ -124,13 +124,16 @@ async def tree_snapshot(
     return TableSnapshot(COLUMNS, rows, actions)
 
 
-async def process_details(context: TaskContext, row: dict[str, str]) -> RowDetails:
-    current = await tree_snapshot(context, {}, session=row["SESSION"])
+async def process_details(
+    context: TaskContext, row: dict[str, str], *, session: str = ""
+) -> RowDetails:
+    session = session or row["SESSION"]
+    current = await tree_snapshot(context, {}, session=session)
     selected = next((values for values in current.rows if values[1] == row["PID"]), None)
-    title = f"Процесс PID {row['PID']} · Codex {row['SESSION']}"
+    title = f"Процесс PID {row['PID']} · Codex {session}"
     if selected is None:
         return RowDetails(title, "Процесс завершился или больше не принадлежит этой сессии.")
-    cwd = (await session_directories(context, [row["SESSION"]]))[row["SESSION"]]
+    cwd = (await session_directories(context, [session]))[session]
     cpu = sum(float(values[4]) for values in current.rows)
     memory = sum(float(values[5]) for values in current.rows)
     text = "\n".join(f"{column}: {value}" for column, value in zip(COLUMNS[:-1], selected[:-1]))
@@ -194,6 +197,18 @@ async def snapshot(context: TaskContext, filters: dict[str, str]) -> TableSnapsh
     )
 
 
+async def session_snapshot(
+    context: TaskContext, filters: dict[str, str], *, session: str
+) -> TableSnapshot:
+    tree = await tree_snapshot(context, filters, session=session)
+    visible = [index for index, column in enumerate(tree.columns) if column not in {"SESSION", "PGID"}]
+    return TableSnapshot(
+        tuple(tree.columns[index] for index in visible),
+        [tuple(row[index] for index in visible) for row in tree.rows],
+        (RowAction("enter", "О процессе", partial(process_details, session=session)),),
+    )
+
+
 async def open_session(context: TaskContext, row: dict[str, str]) -> RowTable:
     return RowTable(
         config.Task(
@@ -207,5 +222,5 @@ async def open_session(context: TaskContext, row: dict[str, str]) -> RowTable:
                 config.TaskFilter("order", "Порядок", default="asc", options=["asc", "desc"]),
             ],
         ),
-        partial(tree_snapshot, session=row["PID"]),
+        partial(session_snapshot, session=row["PID"]),
     )
