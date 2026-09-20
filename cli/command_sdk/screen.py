@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Input, Label, Select, Static, TextArea
+from textual.widgets import DataTable, Input, Label, LoadingIndicator, Select, Static, TextArea
 
 from .. import config
 from . import Provider, RowAction, RowDetails, RowTable, TableSnapshot, TaskContext
@@ -80,6 +80,7 @@ class TaskTableScreen(Screen[None]):
     TaskTableScreen .task-filter { width: 1fr; height: auto; padding: 0 1; }
     TaskTableScreen Label { height: 1; }
     TaskTableScreen DataTable { height: 1fr; }
+    TaskTableScreen #task-loading { height: 1; }
     TaskTableScreen #task-status { height: auto; max-height: 10; overflow-y: auto; padding: 0 1; }
     """
 
@@ -108,6 +109,7 @@ class TaskTableScreen(Screen[None]):
                     else:
                         yield Input(value=field.default, placeholder="Все", id=f"filter-{field.name}")
         yield DataTable(id="task-data", cursor_type="row", zebra_stripes=True)
+        yield LoadingIndicator(id="task-loading")
         yield Static("", id="task-status", markup=False)
 
     def on_mount(self) -> None:
@@ -142,6 +144,9 @@ class TaskTableScreen(Screen[None]):
     @work(exclusive=True, group="task-refresh", exit_on_error=False)
     async def fetch(self, generation: int, filters: dict[str, str]) -> None:
         self.fetching = True
+        if self.snapshot is None:
+            self.query_one("#task-loading", LoadingIndicator).display = True
+            self.query_one("#task-status", Static).update("Загрузка… · Esc — назад")
         try:
             snapshot = await self.provider(self.context, filters)
             if generation != self.generation:
@@ -177,6 +182,7 @@ class TaskTableScreen(Screen[None]):
         finally:
             if generation == self.generation:
                 self.fetching = False
+                self.query_one("#task-loading", LoadingIndicator).display = False
 
     def action_close(self) -> None:
         self.ready = False
@@ -204,6 +210,7 @@ class TaskTableScreen(Screen[None]):
                 self.generation += 1
                 self.workers.cancel_group(self, "task-refresh")
                 self.fetching = False
+                self.query_one("#task-loading", LoadingIndicator).display = False
                 self.run_row_action(action, row)
                 return True
         return False

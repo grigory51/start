@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from textual.app import App
-from textual.widgets import DataTable, Input, Static, TextArea
+from textual.widgets import DataTable, Input, LoadingIndicator, Static, TextArea
 
 from cli.config import Task, TaskFilter
 from cli.manage import ManagerApp
@@ -277,3 +277,66 @@ class NestedTableTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press('escape')
             await pilot.pause()
             self.assertIs(app.screen, original)
+
+
+class LoadingStateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_loading_refresh_and_error(self) -> None:
+        pending = asyncio.Event()
+        failure = False
+
+        async def provider(context, filters):
+            await pending.wait()
+            if failure:
+                raise ValueError('load failed')
+            return TableSnapshot(('PID',), [('100',)])
+
+        app = App()
+        async with app.run_test() as pilot:
+            screen = TaskTableScreen(Task('slow', 'Slow', '', {}, refresh=3600), provider)
+            app.push_screen(screen)
+            await pilot.pause()
+            indicator = screen.query_one(LoadingIndicator)
+            self.assertTrue(indicator.display)
+            self.assertIn('Загрузка', str(screen.query_one('#task-status', Static).render()))
+            pending.set()
+            await pilot.pause()
+            self.assertFalse(indicator.display)
+            status = str(screen.query_one('#task-status', Static).render())
+            table_region = screen.query_one(DataTable).region
+            pending.clear()
+            screen.action_reload()
+            await pilot.pause()
+            self.assertFalse(indicator.display)
+            self.assertEqual(screen.query_one(DataTable).row_count, 1)
+            self.assertEqual(str(screen.query_one('#task-status', Static).render()), status)
+            self.assertEqual(screen.query_one(DataTable).region, table_region)
+            failure = True
+            pending.set()
+            await pilot.pause()
+            self.assertFalse(indicator.display)
+            self.assertIn('load failed', str(screen.query_one('#task-status', Static).render()))
+
+    async def test_cancelled_request_does_not_hide_new_loading(self) -> None:
+        pending = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def provider(context, filters):
+            try:
+                await pending.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return TableSnapshot(('PID',), [])
+
+        app = App()
+        async with app.run_test() as pilot:
+            screen = TaskTableScreen(Task('slow', 'Slow', '', {}, refresh=3600), provider)
+            app.push_screen(screen)
+            await pilot.pause()
+            screen.action_reload()
+            await pilot.pause()
+            self.assertTrue(cancelled.is_set())
+            self.assertTrue(screen.query_one(LoadingIndicator).display)
+            pending.set()
+            await pilot.pause()
+            self.assertFalse(screen.query_one(LoadingIndicator).display)
