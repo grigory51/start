@@ -32,7 +32,7 @@ files:
 
 # manage — TUI: просмотр агентов/плагинов, включение/выключение скилов.
 manage:
-	$(START) manage $(ARGS)
+	$(START) $(ARGS)
 
 # seed — пересобрать plugin seed (.seed/) + merge settings.
 seed:

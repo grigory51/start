@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from cli.command_sdk import TaskContext, load_provider
+from cli.command_sdk import RowDetails, RowPrompt, TaskContext, load_provider
+from cli.commands.codex_sessions import Session
 from cli.commands.codex_process_tree import COLUMNS, process_details, snapshot as sessions_snapshot, tree_snapshot as snapshot, open_session, elapsed_seconds
 from cli import config
 
@@ -20,6 +22,11 @@ PROCESSES = """100 1 100 1.0 0.1 00:10 S /bin/codex
 
 
 class CodexProcessTreeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.history = patch('cli.commands.codex_process_tree.load_sessions', return_value=[]).start()
+        self.activity = patch('cli.commands.codex_process_tree.session_processes', AsyncMock(return_value={})).start()
+        self.addCleanup(patch.stopall)
+
     async def test_tree_order_mcp_inheritance_and_no_duplicate_nested_codex(self) -> None:
         context = TaskContext()
         with patch.object(context, 'run', AsyncMock(side_effect=['100\n104\n200\n999\n', PROCESSES])) as run:
@@ -113,7 +120,7 @@ class CodexProcessTreeTests(unittest.IsolatedAsyncioTestCase):
                 result = await sessions_snapshot(context, {'cwd': query})
             self.assertEqual([row[0] for row in result.rows], expected)
             row = next(row for row in result.rows if row[0] == '100')
-            self.assertEqual(row, ('100', '/work/project a', '5', '7.00', '0.80', '00:10'))
+            self.assertEqual(row[:6], ('100', '/work/project a', '5', '7.00', '0.80', '00:10'))
             self.assertEqual(run.await_args.args, ('lsof', '-a', '-p', '200,100', '-d', 'cwd', '-Fpn'))
 
     async def test_open_session_keeps_fixed_pid_and_process_filters(self) -> None:
@@ -172,3 +179,67 @@ class CodexProcessTreeTests(unittest.IsolatedAsyncioTestCase):
     def test_elapsed_sort_value_handles_days_hours_and_minutes(self) -> None:
         self.assertEqual([elapsed_seconds(value) for value in ('59:59', '01:00:00', '1-00:00:00')],
                          [3599, 3600, 86400])
+
+    async def test_all_sessions_and_active_identity_not_cwd(self) -> None:
+        first = Session('019fcc20-8045-7a72-93a3-3a92c63910c9', '/same', Path('/first'), 10)
+        second = Session('019fcc20-8045-7a72-93a3-3a92c63910ca', '/same', Path('/second'), 20)
+        self.history.return_value = [first, second]
+        self.activity.return_value = {first.id: ['100']}
+        context = TaskContext()
+        for status, expected in [('Активные', [first.id]), ('Все', [second.id, first.id])]:
+            with self.subTest(status=status), patch('cli.commands.codex_process_tree.sys.platform', 'darwin'), patch.object(
+                context, 'run', AsyncMock(side_effect=['100\n', PROCESSES, 'p100\nn/same\n'])
+            ):
+                result = await sessions_snapshot(context, {'status': status, 'sort': 'UPDATED', 'order': 'desc'})
+            self.assertEqual([row[6] for row in result.rows], expected)
+            self.assertEqual(sum(row[7] == 'Активна' for row in result.rows), 1)
+
+    async def test_completed_session_shows_transcript_with_export_and_resume(self) -> None:
+        record = Session('019fcc20-8045-7a72-93a3-3a92c63910c9', '/work', Path('/session'), 10)
+        self.history.return_value = [record]
+        context = TaskContext()
+        with patch('cli.commands.codex_process_tree.session_transcript', return_value='## Пользователь\n\nВопрос'):
+            result = await open_session(context, {'PID': '', 'SESSION': record.id, 'CWD': record.cwd})
+        self.assertIsInstance(result, RowDetails)
+        self.assertIn('Вопрос', result.text)
+        self.assertEqual([action.key for action in result.actions], ['e', 'r'])
+        prompt = await result.actions[0].handler(context, {})
+        self.assertIsInstance(prompt, RowPrompt)
+        self.assertIn(record.id, prompt.default)
+        with patch('cli.commands.codex_process_tree.export_session', return_value=Path('/export.md')) as export:
+            details = await prompt.handler(context, '/export.md')
+        export.assert_called_once_with(record, '/export.md')
+        self.assertEqual(details.text, '/export.md')
+        self.activity.return_value = {record.id: ['100']}
+        with patch.object(context, 'run', AsyncMock(side_effect=['100\n', PROCESSES])), patch(
+            'cli.commands.codex_process_tree.resume_session', AsyncMock()
+        ) as resume:
+            with self.assertRaisesRegex(ValueError, 'уже активна'):
+                await result.actions[1].handler(context, {})
+        resume.assert_not_awaited()
+
+    async def test_active_session_filtered_to_empty_does_not_offer_resume(self) -> None:
+        record = Session('019fcc20-8045-7a72-93a3-3a92c63910c9', '/work', Path('/session'), 10)
+        self.history.return_value = [record]
+        self.activity.return_value = {record.id: ['100']}
+        context = TaskContext()
+        child = await open_session(context, {'PID': '100', 'SESSION': record.id, 'CWD': record.cwd})
+        with patch.object(context, 'run', AsyncMock(side_effect=['100\n', PROCESSES])):
+            result = await child.provider(context, {'command': 'no match'})
+        self.assertEqual(result.rows, [])
+        self.assertEqual([action.key for action in result.table_actions], ['e'])
+
+    async def test_subagents_do_not_duplicate_process_totals_or_appear_in_history(self) -> None:
+        parent = Session('019fcc20-8045-7a72-93a3-3a92c63910c9', '/work', Path('/parent'), 10)
+        child = Session('019fcc20-8045-7a72-93a3-3a92c63910ca', '/work', Path('/child'), 20, is_subagent=True)
+        self.history.return_value = [parent, child]
+        self.activity.return_value = {parent.id: ['100'], child.id: ['100']}
+        context = TaskContext()
+        for status in ('Активные', 'Все'):
+            with self.subTest(status=status), patch('cli.commands.codex_process_tree.sys.platform', 'darwin'), patch.object(
+                context, 'run', AsyncMock(side_effect=['100\n', PROCESSES, 'p100\nn/work\n'])
+            ):
+                result = await sessions_snapshot(context, {'status': status})
+            self.assertEqual(len(result.rows), 1)
+            self.assertEqual(result.rows[0][6], parent.id)
+            self.assertEqual(result.rows[0][2:5], ('5', '7.00', '0.80'))

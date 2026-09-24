@@ -18,6 +18,16 @@ class RowDetails:
     """Текстовый результат действия для просмотра в отдельной модалке."""
     title: str
     text: str
+    actions: tuple[RowAction, ...] = ()
+
+
+@dataclass
+class RowPrompt:
+    """Запрос значения для продолжения действия в модальном окне."""
+    title: str
+    label: str
+    default: str
+    handler: Callable[[TaskContext, str], Awaitable[RowDetails | RowTable | RowPrompt | None]]
 
 
 @dataclass
@@ -25,7 +35,7 @@ class RowAction:
     """Действие над выбранной строкой; confirmation форматируется по колонкам."""
     key: str
     label: str
-    handler: Callable[[TaskContext, dict[str, str]], Awaitable[RowDetails | RowTable | None]]
+    handler: Callable[[TaskContext, dict[str, str]], Awaitable[RowDetails | RowTable | RowPrompt | None]]
     confirmation: str | None = None
 
 
@@ -35,6 +45,7 @@ class TableSnapshot:
     columns: tuple[str, ...]
     rows: list[tuple[str, ...]]
     actions: tuple[RowAction, ...] = ()
+    table_actions: tuple[RowAction, ...] = ()
 
     def __post_init__(self) -> None:
         if any(len(row) != len(self.columns) for row in self.rows):

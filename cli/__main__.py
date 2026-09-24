@@ -1,4 +1,4 @@
-"""Точка входа CLI. Подкоманды: up, ui.
+"""Точка входа CLI: без команды открывает TUI.
 
 Запуск: `uv run start <команда>` (или `python -m cli`).
 """
@@ -10,6 +10,7 @@ import sys
 
 from . import completion, config, plugins, settings
 from .install import Ctx
+from .sections import M_ALIASES, M_TARGETS
 from .submodule import add_submodule
 from .up import run_up
 
@@ -43,7 +44,7 @@ def _cmd_seed(args: argparse.Namespace) -> int:
 
 
 def _cmd_manage(args: argparse.Namespace) -> int:
-    from .manage import run_manage  # ленивый импорт: textual тянем только для manage
+    from .manage import run_manage  # Textual загружается только при открытии TUI.
     return run_manage(target=args.section)
 
 
@@ -70,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Переносимый сетап машины: единый AI-каталог для Claude/Codex, Files и TUI.",
     )
     sub = ap.add_subparsers(dest="cmd")
+    ap.set_defaults(func=_cmd_manage, section=None)
 
     up = sub.add_parser("up", help="синхронизация: сабмодули + плагины (seed) + symlink'и + settings")
     up.add_argument("--dry-run", action="store_true", help="показать план без изменений")
@@ -95,13 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--dry-run", action="store_true", help="показать план без изменений")
     sd.set_defaults(func=_cmd_seed)
 
-    manage = sub.add_parser(
-        "manage", aliases=["m"],
-        help="TUI: домены AI/Files/Команды (алиас m; быстрый переход — `m skills`, `m plugins`, …)")
-    manage.add_argument("section", nargs="?", default=None,
-                        help="открыть сразу на разделе: commands, files, "
-                             "ai, agents, skills, plugins, mcp, status")
-    manage.set_defaults(func=_cmd_manage)
+    for section in M_TARGETS:
+        if section not in M_ALIASES:
+            tab = sub.add_parser(f"tab:{section}", help=f"открыть вкладку {section}")
+            tab.set_defaults(func=_cmd_manage, section=section)
 
     addsub = sub.add_parser(
         "add-submodule",
@@ -128,9 +127,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     ap = build_parser()
     args = ap.parse_args()
-    if not getattr(args, "func", None):
-        ap.print_help()
-        return 1
     return args.func(args)
 
 

@@ -1,14 +1,18 @@
 """Деревья процессов Codex из общего снимка ps."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 import sys
 from typing import Literal
 
 from .. import config
-from ..command_sdk import RowAction, RowDetails, RowTable, TableSnapshot, TaskContext
+from ..command_sdk import RowAction, RowDetails, RowPrompt, RowTable, TableSnapshot, TaskContext
+
+from .codex_sessions import Session, export_session, load_sessions, resume_session, session_processes, session_transcript
 
 COLUMNS = ("SESSION", "PID", "PPID", "PGID", "CPU %", "MEM %", "ELAPSED", "STATE", "TYPE", "COMMAND")
 
@@ -169,51 +173,128 @@ async def session_directories(context: TaskContext, sessions: list[str]) -> dict
 
 
 async def snapshot(context: TaskContext, filters: dict[str, str]) -> TableSnapshot:
-    columns = ("PID", "CWD", "PROCESSES", "CPU %", "MEM %", "ELAPSED")
+    columns = ("PID", "CWD", "PROCESSES", "CPU %", "MEM %", "ELAPSED", "SESSION", "STATUS", "UPDATED")
     sort, descending = sorting(filters, columns, "MEM %", "desc")
+    status = filters.get("status", "Активные")
+    if status not in {"Активные", "Все"}:
+        raise ValueError("Сессии: выберите Активные или Все")
     tree = await tree_snapshot(context, {})
-    sessions: dict[str, list[tuple[str, ...]]] = {}
+    processes_by_root: dict[str, list[tuple[str, ...]]] = {}
     for row in tree.rows:
-        sessions.setdefault(row[0], []).append(row)
-    directories = await session_directories(context, list(sessions))
-    query = filters.get("cwd", "").casefold()
+        processes_by_root.setdefault(row[0], []).append(row)
+    directories = await session_directories(context, list(processes_by_root))
+    records = [record for record in await asyncio.to_thread(load_sessions) if not record.is_subagent]
+    active = await session_processes(context, list(processes_by_root))
+    records_by_pid: dict[str, list[Session]] = {}
+    for record in records:
+        for pid in active.get(record.id, []):
+            records_by_pid.setdefault(pid, []).append(record)
     rows = []
-    for pid, processes in sessions.items():
-        cwd = directories[pid]
-        if query not in cwd.casefold():
-            continue
+    for pid, processes in processes_by_root.items():
         cpu = sum(float(process[4]) for process in processes)
         memory = sum(float(process[5]) for process in processes)
-        rows.append((pid, cwd, str(len(processes)), f"{cpu:.2f}", f"{memory:.2f}", processes[0][6]))
+        base = (pid, directories[pid], str(len(processes)), f"{cpu:.2f}", f"{memory:.2f}", processes[0][6])
+        associated = records_by_pid.get(pid, [])
+        for record in associated:
+            rows.append((*base[:1], record.cwd, *base[2:], record.id, "Активна",
+                         datetime.fromtimestamp(record.updated).isoformat(sep=" ", timespec="seconds")))
+        if not associated:
+            rows.append((*base, "", "Активна", ""))
+    if status == "Все":
+        for record in records:
+            if record.id not in active:
+                rows.append(("", record.cwd, "0", "0.00", "0.00", "", record.id, "Завершена",
+                             datetime.fromtimestamp(record.updated).isoformat(sep=" ", timespec="seconds")))
+    query = filters.get("cwd", "").casefold()
+    rows = [row for row in rows if query in row[1].casefold()]
     index = columns.index(sort)
-    rows.sort(key=lambda row: int(row[0]))
+    rows.sort(key=lambda row: (int(row[0] or 0), row[6]))
     rows.sort(key=lambda row: (
-        row[index].casefold() if sort == "CWD" else
-        elapsed_seconds(row[index]) if sort == "ELAPSED" else float(row[index])
+        row[index].casefold() if sort in {"CWD", "SESSION", "STATUS", "UPDATED"} else
+        elapsed_seconds(row[index]) if sort == "ELAPSED" and row[index] else float(row[index] or 0)
     ), reverse=descending)
-    return TableSnapshot(
-        columns, rows,
-        (RowAction("enter", "Дерево процессов", open_session),),
+    return TableSnapshot(columns, rows, (RowAction("enter", "Открыть сессию", open_session),))
+
+
+async def export_dialog(context: TaskContext, row: dict[str, str], *, record: Session) -> RowPrompt:
+    return RowPrompt(
+        title=f"Экспорт Codex {record.id}", label="Markdown-файл (полный путь)",
+        default=str(Path.home() / "Downloads" / f"codex-{record.id}.md"),
+        handler=partial(write_export, record=record),
     )
 
 
+async def write_export(context: TaskContext, value: str, *, record: Session) -> RowDetails:
+    output = await asyncio.to_thread(export_session, record, value)
+    return RowDetails("Сессия экспортирована", str(output))
+
+
+async def unavailable_export(context: TaskContext, row: dict[str, str]) -> RowDetails:
+    return RowDetails("Экспорт недоступен", "У процесса пока не найден файл истории сессии. "
+                      "Вернитесь к списку после сохранения первого сообщения.")
+
+
+async def resume_dialog(context: TaskContext, row: dict[str, str], *, record: Session) -> RowDetails:
+    tree = await tree_snapshot(context, {})
+    active = await session_processes(context, list(dict.fromkeys(row[0] for row in tree.rows)))
+    if record.id in active:
+        raise ValueError("Сессия уже активна")
+    await resume_session(context, record)
+    return RowDetails("Resume", f"Открыто новое окно терминала: {record.cwd}")
+
+
 async def session_snapshot(
-    context: TaskContext, filters: dict[str, str], *, session: str
+    context: TaskContext, filters: dict[str, str], *, session: str, record: Session | None = None
 ) -> TableSnapshot:
-    tree = await tree_snapshot(context, filters, session=session)
+    table_actions = (RowAction("e", "Экспорт", unavailable_export),)
+    if record is None:
+        tree = await tree_snapshot(context, filters, session=session)
+    else:
+        tree = await tree_snapshot(context, {key: value for key, value in filters.items()
+                                           if key not in {"kind", "command"}})
+        active = await session_processes(context, list(dict.fromkeys(row[0] for row in tree.rows)))
+        pids = active.get(record.id, [])
+        kind = filters.get("kind", "all")
+        if kind not in {"all", "process", "mcp"}:
+            raise ValueError("kind должен быть all, process или mcp")
+        query = filters.get("command", "").casefold()
+        tree.rows = [row for row in tree.rows if row[0] in pids and
+                     (kind == "all" or row[8] == kind) and query in row[9].casefold()]
+        session = pids[0] if pids else ""
+        table_actions = (RowAction("e", "Экспорт", partial(export_dialog, record=record)),)
+        if not pids:
+            table_actions += (RowAction("r", "Resume в новом окне", partial(resume_dialog, record=record),
+                                       confirmation=f"Возобновить Codex {record.id} в новом окне терминала?"),)
     visible = [index for index, column in enumerate(tree.columns) if column not in {"SESSION", "PGID"}]
     return TableSnapshot(
         tuple(tree.columns[index] for index in visible),
         [tuple(row[index] for index in visible) for row in tree.rows],
         (RowAction("enter", "О процессе", partial(process_details, session=session)),),
+        table_actions=table_actions,
     )
 
 
-async def open_session(context: TaskContext, row: dict[str, str]) -> RowTable:
+async def open_session(context: TaskContext, row: dict[str, str]) -> RowTable | RowDetails:
+    record = None
+    if row.get("SESSION"):
+        records = await asyncio.to_thread(load_sessions)
+        record = next((item for item in records if item.id == row["SESSION"]), None)
+        if record is None:
+            raise ValueError("Файл выбранной сессии больше не доступен")
+    if record is not None and (row.get("STATUS") == "Завершена" or not row.get("PID")):
+        text = await asyncio.to_thread(session_transcript, record)
+        return RowDetails(
+            f"Codex {record.id} · {record.cwd}", text,
+            actions=(
+                RowAction("e", "Экспорт", partial(export_dialog, record=record)),
+                RowAction("r", "Resume в новом окне", partial(resume_dialog, record=record),
+                          confirmation=f"Возобновить Codex {record.id} в новом окне терминала?"),
+            ),
+        )
     return RowTable(
         config.Task(
-            name="codex-session", title=f"Codex {row['PID']} · {row['CWD']}",
-            description="Дерево процессов сессии", run={}, sudo=context.sudo,
+            name="codex-session", title=f"Codex {row.get('SESSION') or row['PID']} · {row['CWD']}",
+            description="Дерево процессов, экспорт и resume сессии", run={}, sudo=context.sudo,
             filters=[
                 config.TaskFilter("kind", "Тип", default="all", options=["all", "process", "mcp"]),
                 config.TaskFilter("command", "Команда содержит"),
@@ -222,5 +303,5 @@ async def open_session(context: TaskContext, row: dict[str, str]) -> RowTable:
                 config.TaskFilter("order", "Порядок", default="asc", options=["asc", "desc"]),
             ],
         ),
-        partial(session_snapshot, session=row["PID"]),
+        partial(session_snapshot, session=row["PID"], record=record),
     )

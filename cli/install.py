@@ -193,6 +193,12 @@ def run_install(*, dry_run: bool = False, force: bool = False, quiet: bool = Fal
     do_claude = only in (None, "ai", "ai:claude")
     do_codex = only in (None, "ai", "ai:codex")
     do_files = only in (None, "files")
+    if do_claude or do_codex:
+        try:
+            config.load_mcp()
+        except config.FileValueError as error:
+            print(f"  ! {error}; установка отменена.")
+            return 1
     ctx = Ctx(dry_run, force)
     if not quiet:
         ctx.say(f"Репо:        {REPO_DIR}")

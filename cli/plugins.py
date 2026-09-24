@@ -94,24 +94,37 @@ def _run(cmd: list[str], seed: Path) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
-def check_requirements(ctx, ref: str, requirements) -> None:
-    """Проверить внешние зависимости одного источника ({name, check, hint}).
-
-    Для каждого требования прогоняется `check` (shell). При ненулевом коде печатается
-    `hint` — как поставить. Менеджер сам зависимость НЕ ставит (внешний софт). Не
-    фатально: только предупреждение, ctx.errors не растёт. ref — источник требования
-    (ref плагина / «config.toml [statusline]») для вывода.
-    """
+def check_requirements(ctx, ref: str, requirements: list[dict]) -> None:
+    """Проверить зависимости; выполнить явно заданный install при отсутствии."""
     for req in requirements:
+        label = req.get("name") or req["check"]
         try:
-            rc = subprocess.run(req["check"], shell=True, cwd=REPO_DIR,
-                                capture_output=True).returncode
-        except OSError:
-            rc = 1
-        if rc != 0:
-            label = req.get("name") or req["check"]
-            ctx.say(f"  ! {ref}: требуется «{label}» — не найдено.")
-            ctx.say(f"    Установить: {req['hint']}")
+            check = subprocess.run(req["check"], shell=True, cwd=REPO_DIR,
+                                   capture_output=True, text=True, timeout=30)
+            if check.returncode == 0:
+                continue
+            installer = req.get("install")
+            if installer:
+                if ctx.dry_run:
+                    ctx.say(f"  [dry-run] {ref}: установить {label}: {installer}")
+                    continue
+                ctx.say(f"  + {ref}: установка {label}…")
+                result = subprocess.run(installer, shell=True, cwd=REPO_DIR,
+                                        capture_output=True, text=True, timeout=180)
+                if result.returncode == 0:
+                    result = subprocess.run(req["check"], shell=True, cwd=REPO_DIR,
+                                            capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    ctx.say(f"  = {label}: готово")
+                    continue
+                ctx.errors += 1
+                ctx.say(f"  ! {label}: {result.stderr or result.stdout or f'код выхода {result.returncode}'}")
+        except (OSError, subprocess.TimeoutExpired) as error:
+            if req.get("install"):
+                ctx.errors += 1
+            ctx.say(f"  ! {ref}: {label}: {error}")
+        ctx.say(f"  ! {ref}: требуется «{label}».")
+        ctx.say(f"    Установить: {req['hint']}")
 
 
 def build_seed(ctx) -> SeedResult:

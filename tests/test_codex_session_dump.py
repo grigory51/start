@@ -27,8 +27,8 @@ class CodexSessionDumpTests(unittest.TestCase):
             environment = {**os.environ, "CODEX_HOME": str(root / ".codex")}
 
             subprocess.run(
-                [sys.executable, "scripts/codex-session-dump.py", session_id, str(output)],
-                cwd=Path(__file__).parent.parent,
+                [sys.executable, "-I", str(Path(__file__).parent.parent / "scripts/codex-session-dump.py"), session_id, str(output)],
+                cwd=root,
                 env=environment,
                 check=True,
                 capture_output=True,

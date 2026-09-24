@@ -83,9 +83,13 @@ def install_skills(ctx: Ctx) -> None:
         ctx.say(f"  ! {warning}")
         ctx.errors += 1
     sources: dict[str, Path] = {}
+    checked_sources: set[str] = set()
     for skill in cfg.enabled_skills:
         if not adapters.supports(skill, "codex"):
             continue
+        if skill.requirements and skill.source not in checked_sources:
+            checked_sources.add(skill.source)
+            plugins.check_requirements(ctx, skill.source, skill.requirements)
         try:
             sources[skill.name] = adapters.codex_skill(skill, dry_run=ctx.dry_run)
         except (OSError, adapters.AdapterError) as exc:

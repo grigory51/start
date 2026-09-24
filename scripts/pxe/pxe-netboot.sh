@@ -6,7 +6,7 @@
 # по сети, получает локальное меню netboot.xyz и ставится из предскачанных ассетов —
 # интернет ей не нужен.
 #
-# Запускается из домена «Команды» TUI (uv run start manage → F2 «Команды»): env REPO —
+# Запускается из домена «Команды» TUI (uv run start → F2 «Команды»): env REPO —
 # корень репо, cwd — тоже репо. Можно и вручную: bash scripts/pxe/pxe-netboot.sh
 #
 # Роли под OrbStack (Linux-VM без bridged-L2 к en0): dnsmasq — нативно на хосте (broadcast

@@ -15,7 +15,7 @@
   Команды — разовые действия ([[commands.tasks]]): r/Enter запускают команду для
             текущей ОС (с выходом из TUI, чтобы sudo мог спросить пароль).
 
-Запуск: `uv run start manage`.
+Запуск: `uv run start`.
 """
 
 from __future__ import annotations

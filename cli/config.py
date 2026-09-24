@@ -17,9 +17,10 @@ import sys
 import json
 import re
 import tomllib
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import tomlkit
 
@@ -28,6 +29,225 @@ CONFIG = REPO_DIR / "config.toml"
 # Локальный overlay (gitignore): машино-специфичные переопределения `enabled`.
 # Структура: [local.<section>] <key> = <enabled>. См. _load_local / _effective_*.
 CONFIG_LOCAL = REPO_DIR / "config.local.toml"
+
+
+class FileValueError(ValueError):
+    """Ошибка ссылки на файл; сообщение не содержит значение секрета."""
+
+
+def _file_values(value: Any, root: Path, *, read: bool = False) -> Any:
+    """Нормализовать пути или прочитать строковые значения ссылок $file."""
+    if isinstance(value, list):
+        return [_file_values(item, root, read=read) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if "$file" not in value:
+        return {key: _file_values(item, root, read=read) for key, item in value.items()}
+    if set(value) != {"$file"} or not isinstance(value["$file"], str) or not value["$file"].strip():
+        raise FileValueError("Ссылка $file требует единственный непустой строковый путь")
+    path = root / Path(value["$file"]).expanduser()
+    if not read:
+        return {"$file": str(path.absolute())}
+    try:
+        content = path.read_text(encoding="utf-8").rstrip("\r\n")
+    except (OSError, UnicodeError):
+        raise FileValueError(f"Не удалось прочитать файл значения: {path}") from None
+    if not content.strip():
+        raise FileValueError(f"Файл значения пуст: {path}")
+    return content
+
+
+@dataclass
+class ConfigContext:
+    """Каталог с разрешёнными путями и источником проектных изменений."""
+    document: dict
+    local: dict
+    root: Path
+    project_keys: dict[str, set[str]] = field(default_factory=dict)
+    project_document: dict = field(default_factory=dict)
+
+
+def _merge_tables(base: dict, overlay: dict) -> dict:
+    result = deepcopy(base)
+    for key, value in overlay.items():
+        if (isinstance(value, dict) and isinstance(result.get(key), dict)
+                and "$file" not in value and "$file" not in result[key]):
+            result[key] = _merge_tables(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
+def _strict_document(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"Не удалось прочитать {path}: {error}") from error
+
+
+def _catalog_entries(ai: dict, section: str) -> list[dict]:
+    entries = ai.get(section, [])
+    if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
+        raise ValueError(f"ai.{section} должен быть массивом таблиц")
+    key = "name" if section == "mcp" else "path"
+    seen: set[str] = set()
+    for entry in entries:
+        name = entry.get(key)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"ai.{section} требует {key}")
+        if name in seen:
+            raise ValueError(f"Дубль ai.{section}: {name}")
+        seen.add(name)
+    return entries
+
+
+def _local_sections(document: dict) -> dict:
+    local = document.get("local", {})
+    if not isinstance(local, dict) or set(local) - {"ai"}:
+        raise ValueError("Поддерживается только local.ai")
+    ai = local.get("ai", {})
+    if not isinstance(ai, dict) or set(ai) - {"skills", "agents", "plugins", "mcp", "hooks"}:
+        raise ValueError("Неизвестная секция local.ai")
+    if any(not isinstance(value, dict) for value in ai.values()):
+        raise ValueError("local.ai содержит таблицы переопределений")
+    return ai
+
+
+def _apply_catalog_local(ai: dict, local: dict, aliases: dict[str, dict[str, str]],
+                         root: Path, touched: dict[str, set[str]] | None = None) -> None:
+    for section, overrides in local.items():
+        key = "name" if section == "mcp" else "path"
+        entries = {entry[key]: entry for entry in _catalog_entries(ai, section)}
+        for name, enabled in overrides.items():
+            resolved = name if section == "mcp" else aliases.get(section, {}).get(
+                name, str((root / name).resolve()))
+            if resolved not in entries:
+                raise ValueError(f"local.ai.{section}: неизвестный источник {name}")
+            _validate_enabled(section, enabled)
+            entries[resolved]["enabled"] = deepcopy(enabled)
+            if touched is not None:
+                touched.setdefault(section, set()).add(resolved)
+
+
+def _validate_enabled(section: str, enabled: object) -> None:
+    if section in {"skills", "agents"}:
+        if enabled is False:
+            return
+        if not isinstance(enabled, list) or any(not isinstance(v, str) for v in enabled):
+            raise ValueError(f"ai.{section}.enabled требует список имён или false")
+    elif not isinstance(enabled, bool):
+        raise ValueError(f"ai.{section}.enabled требует bool")
+
+
+def _normalize_catalog(document: dict, root: Path) -> dict[str, dict[str, str]]:
+    aliases: dict[str, dict[str, str]] = {}
+    ai = document.setdefault("ai", {})
+    if not isinstance(ai, dict):
+        raise ValueError("ai должен быть таблицей")
+    for section in ("skills", "agents", "plugins", "hooks"):
+        aliases[section] = {}
+        for entry in _catalog_entries(ai, section):
+            raw = entry["path"]
+            entry["path"] = str((root / raw).resolve())
+            aliases[section][raw] = entry["path"]
+        _catalog_entries(ai, section)
+    _catalog_entries(ai, "mcp")
+    for entry in ai.get("mcp", []):
+        if "server" in entry:
+            entry["server"] = _file_values(entry["server"], root)
+    return aliases
+
+
+def global_context() -> ConfigContext:
+    """Глобальный каталог с применёнными machine-only MCP и local.ai."""
+    document = _strict_document(CONFIG)
+    local_document = _strict_document(CONFIG_LOCAL)
+    ai = document.setdefault("ai", {})
+    if not isinstance(ai, dict):
+        raise ValueError("ai должен быть таблицей")
+    machine_ai = local_document.get("ai", {})
+    if not isinstance(machine_ai, dict):
+        raise ValueError("ai должен быть таблицей")
+    local_mcp = _catalog_entries(machine_ai, "mcp")
+    if local_mcp:
+        ai["mcp"] = [*_catalog_entries(ai, "mcp"), *deepcopy(local_mcp)]
+    aliases = _normalize_catalog(document, REPO_DIR)
+    _apply_catalog_local(ai, _local_sections(local_document), aliases, REPO_DIR)
+    return ConfigContext(document=document, local={}, root=REPO_DIR)
+
+
+def load_project(path: Path) -> ConfigContext:
+    """Разрешить проектный overlay поверх глобального каталога без записи файлов."""
+    if path.is_symlink():
+        raise ValueError("Проектный start.toml не должен быть symlink")
+    path = path.resolve()
+    if not path.is_file():
+        raise ValueError(f"Проектный конфиг не найден: {path}")
+    project = _strict_document(path)
+    if set(project) - {"ai", "local"}:
+        raise ValueError("start.toml поддерживает только ai и local.ai")
+    project_ai = project.get("ai", {})
+    if not isinstance(project_ai, dict) or set(project_ai) - {
+        "mcp", "skills", "agents", "plugins", "hooks", "platforms"
+    }:
+        raise ValueError("Неизвестная секция ai в start.toml")
+    context = global_context()
+    base_ai = context.document.setdefault("ai", {})
+    # Относительный ключ существующего источника продолжает обозначать глобальный источник.
+    original = _strict_document(CONFIG)
+    aliases = _normalize_catalog(original, REPO_DIR)
+    touched: dict[str, set[str]] = {}
+    for section in ("mcp", "skills", "agents", "plugins", "hooks"):
+        key = "name" if section == "mcp" else "path"
+        entries = {entry[key]: entry for entry in _catalog_entries(base_ai, section)}
+        seen: set[str] = set()
+        for raw in _catalog_entries(project_ai, section):
+            entry = deepcopy(raw)
+            if section == "mcp" and "server" in entry:
+                entry["server"] = _file_values(entry["server"], path.parent)
+            name = entry[key]
+            if key == "path":
+                name = aliases[section].get(name, str((path.parent / name).resolve()))
+                aliases[section][entry[key]] = name
+                entry[key] = name
+            if name in seen:
+                raise ValueError(f"Дубль ai.{section}: {name}")
+            seen.add(name)
+            if "enabled" in entry:
+                _validate_enabled(section, entry["enabled"])
+            merged = _merge_tables(entries.get(name, {}), entry)
+            if section == "mcp" and not isinstance(merged.get("server"), dict):
+                raise ValueError(f"ai.mcp {name}: новый сервер требует server")
+            if section == "hooks" and not isinstance(merged.get("events"), (list, dict)):
+                raise ValueError(f"ai.hooks {name}: требуется events")
+            if "platforms" in merged:
+                warnings: list[str] = []
+                _platforms(merged, name, warnings)
+                if warnings:
+                    raise ValueError("; ".join(warnings))
+            entries[name] = merged
+            touched.setdefault(section, set()).add(name)
+        if entries:
+            base_ai[section] = list(entries.values())
+    platforms = project_ai.get("platforms", {})
+    if not isinstance(platforms, dict) or set(platforms) - {"claude", "codex"}:
+        raise ValueError("ai.platforms поддерживает claude и codex")
+    for platform, settings in platforms.items():
+        allowed = {"config", "features", "plugins", "skills"} if platform == "codex" else {"settings"}
+        if not isinstance(settings, dict) or set(settings) - allowed:
+            raise ValueError(f"Неизвестные настройки ai.platforms.{platform}")
+        if any(not isinstance(value, dict) for value in settings.values()):
+            raise ValueError(f"ai.platforms.{platform} содержит таблицы настроек")
+    base_ai["platforms"] = _merge_tables(base_ai.get("platforms", {}), platforms)
+    if platforms:
+        touched["platforms"] = set(platforms)
+    _apply_catalog_local(base_ai, _local_sections(project), aliases, path.parent, touched)
+    context.root = path.parent
+    context.project_keys = touched
+    context.project_document = project
+    return context
 
 
 # --- модель -------------------------------------------------------------------
@@ -42,7 +262,7 @@ class Skill:
     description: str = ""
     # Внешние зависимости из [[skills.requirements]] источника: [{name, check, hint}].
     # check — shell-команда проверки наличия (rc 0 = есть); hint — как поставить.
-    # Менеджер сам их НЕ ставит, только проверяет при up и подсказывает. Напр. локальный
+    # Необязательный install задаёт установку при up; без него выводится hint. Напр. локальный
     # Skottie-плеер для рендера.
     requirements: list[dict] = field(default_factory=list)
     platforms: tuple[str, ...] = ("claude", "codex")
@@ -338,7 +558,7 @@ def _select_names(spec: list[str], available: list[str]) -> set[str]:
     return set(spec)
 
 
-def load() -> ConfigResult:
+def load(context: ConfigContext | None = None) -> ConfigResult:
     """Разобрать config.toml и обнаружить все скилы.
 
     Конфликты имён скилов: берётся первое вхождение, дубль попадает в warnings.
@@ -347,9 +567,9 @@ def load() -> ConfigResult:
     совсем (даже из UI).
     """
     res = ConfigResult()
-    base = _load_doc(CONFIG, res.warnings)
+    base = (context.document if context else _load_doc(CONFIG, res.warnings))
     _legacy_schema_warning(base, res.warnings)
-    lsec = _load_local(res.warnings).get("skills", {})
+    lsec = (context.local if context else _load_local(res.warnings)).get("skills", {})
 
     if not base and not CONFIG.is_file():
         res.warnings.append(f"{CONFIG.name} не найден — скилы не линкуются")
@@ -397,7 +617,7 @@ def load() -> ConfigResult:
     return res
 
 
-def _discover_agents() -> tuple[list[Agent], list[str]]:
+def _discover_agents(context: ConfigContext | None = None) -> tuple[list[Agent], list[str]]:
     """Все агенты из [[agents]]-источников config.toml и warnings.
 
     Зеркало skill-цикла в load(): источники в порядке config.toml, внутри —
@@ -405,9 +625,9 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
     (как у скилов). Линкуются только включённые `enabled`-списком.
     """
     warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
+    base = (context.document if context else _load_doc(CONFIG, warnings))
     _legacy_schema_warning(base, warnings)
-    lsec = _load_local(warnings).get("agents", {})
+    lsec = (context.local if context else _load_local(warnings)).get("agents", {})
 
     seen: dict[str, Agent] = {}
     for rel, entry in _sources(_ai(base), warnings, key="agents"):
@@ -444,9 +664,9 @@ def _discover_agents() -> tuple[list[Agent], list[str]]:
     return list(seen.values()), warnings
 
 
-def load_agents() -> list[Agent]:
+def load_agents(context: ConfigContext | None = None) -> list[Agent]:
     """Все агенты из [[agents]]-источников. Warnings глушатся (для TUI)."""
-    agents, _ = _discover_agents()
+    agents, _ = _discover_agents(context)
     return agents
 
 
@@ -564,12 +784,13 @@ def _scan_session_start(path: Path) -> list[str]:
 
 
 def _parse_requirements(entry: dict, rel: str, warnings: list[str]) -> list[dict]:
-    """Разобрать `requirements` источника: список {name, check, hint}.
+    """Разобрать `requirements`: name, check, hint и необязательный install.
 
     Общий парсер для [[plugins.requirements]], [[skills.requirements]] и
     [[statusline.requirements]]. nested array-of-tables → entry["requirements"] =
     list[dict]. Каждая запись обязана иметь непустые check (shell-команда проверки) и
-    hint (как поставить); name опционален (для вывода). Битые записи пропускаются с warning.
+    hint (как поставить); install — shell-команда установки при отсутствии зависимости.
+    name опционален (для вывода). Битые записи пропускаются с warning.
     """
     out: list[dict] = []
     raw = entry.get("requirements", [])
@@ -585,20 +806,27 @@ def _parse_requirements(entry: dict, rel: str, warnings: list[str]) -> list[dict
         if not check or not hint:
             warnings.append(f"{rel}: requirements без check/hint — пропуск")
             continue
-        out.append({"name": name, "check": check, "hint": hint})
+        requirement = {"name": name, "check": check, "hint": hint}
+        install = req.get("install", "")
+        if not isinstance(install, str):
+            warnings.append(f"{rel}: requirements.install должен быть строкой — пропуск")
+            continue
+        if install.strip():
+            requirement["install"] = install.strip()
+        out.append(requirement)
     return out
 
 
-def _discover_plugins() -> tuple[list[Plugin], list[str]]:
+def _discover_plugins(context: ConfigContext | None = None) -> tuple[list[Plugin], list[str]]:
     """Все плагины из [[plugins]]-источников config.toml + warnings.
 
     path → корень плагина (каталог с .claude-plugin/). marketplace/plugin читаются
     из манифеста (override полями marketplace/plugin в записи). Дубль ref → warning.
     """
     warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
+    base = (context.document if context else _load_doc(CONFIG, warnings))
     _legacy_schema_warning(base, warnings)
-    lsec = _load_local(warnings).get("plugins", {})
+    lsec = (context.local if context else _load_local(warnings)).get("plugins", {})
 
     seen: dict[str, Plugin] = {}
     for rel, entry in _sources(_ai(base), warnings, key="plugins"):
@@ -644,9 +872,9 @@ def _discover_plugins() -> tuple[list[Plugin], list[str]]:
     return list(seen.values()), warnings
 
 
-def load_plugins() -> list[Plugin]:
+def load_plugins(context: ConfigContext | None = None) -> list[Plugin]:
     """Все плагины из [[plugins]]-источников. Warnings глушатся (для TUI)."""
-    plugins, _ = _discover_plugins()
+    plugins, _ = _discover_plugins(context)
     return plugins
 
 
@@ -702,23 +930,26 @@ def load_env() -> dict[str, str]:
     return {str(k): str(v) for k, v in env.items()}
 
 
-def load_codex_flags(section: Literal["features", "plugins", "skills"]) -> dict[str, bool]:
+def load_codex_flags(section: Literal["features", "plugins", "skills"],
+                     context: ConfigContext | None = None) -> dict[str, bool]:
     """Bool-флаги `[ai.platforms.codex.<section>]` из config.toml."""
     warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
+    base = (context.document if context else _load_doc(CONFIG, warnings))
     flags = _ai(base).get("platforms", {}).get("codex", {}).get(section, {})
     if not isinstance(flags, dict):
         return {}
     return {str(key): value for key, value in flags.items() if isinstance(value, bool)}
 
 
-def load_hooks(platform: str) -> tuple[list[dict], list[str]]:
+def load_hooks(platform: str, context: ConfigContext | None = None) -> tuple[list[dict], list[str]]:
     """Loose hooks enabled for a platform."""
     warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
+    base = (context.document if context else _load_doc(CONFIG, warnings))
     out: list[dict] = []
     for entry in _ai(base).get("hooks", []):
         if not isinstance(entry, dict):
+            continue
+        if not _bool_enabled(entry):
             continue
         path = str(entry.get("path") or "").strip()
         if not path:
@@ -831,7 +1062,7 @@ def load_tasks() -> tuple[list[Task], list[str]]:
     return out, warnings
 
 
-def load_mcp() -> tuple[list[McpServer], list[str]]:
+def load_mcp(context: ConfigContext | None = None) -> tuple[list[McpServer], list[str]]:
     """MCP-серверы из [[ai.mcp]] config.toml и config.local.toml + warnings.
 
     [[ai.mcp]] — name-keyed (не path), поэтому отдельный ридер. Каждая запись:
@@ -839,9 +1070,9 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
     inline [ai.mcp.server]. Локальный файл расширяет каталог; дубль name → warning.
     """
     warnings: list[str] = []
-    base = _load_doc(CONFIG, warnings)
+    base = (context.document if context else _load_doc(CONFIG, warnings))
     _legacy_schema_warning(base, warnings)
-    local_doc = _load_doc(CONFIG_LOCAL, warnings)
+    local_doc = {"local": {"ai": context.local}} if context else _load_doc(CONFIG_LOCAL, warnings)
     local = local_doc.get("local", {})
     local_ai = local.get("ai", {}) if isinstance(local, dict) else {}
     lsec = local_ai.get("mcp", {}) if isinstance(local_ai, dict) else {}
@@ -868,6 +1099,8 @@ def load_mcp() -> tuple[list[McpServer], list[str]]:
                 warnings.append(f"дубль MCP '{name}' в {filename} — пропуск")
                 continue
             server = entry.get("server")
+            if isinstance(server, dict) and _effective_bool(lsec, name, entry):
+                server = _file_values(server, context.root if context else REPO_DIR, read=True)
             enabled_local = (
                 _effective_bool(lsec, name, entry) if local_only
                 else (_bool_enabled({"enabled": lsec[name]}) if name in lsec else None)

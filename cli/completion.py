@@ -1,8 +1,7 @@
 """Генерация bash-дополнения для CLI `start` из единого источника.
 
 Списки берутся прямо из кода — без ручного дублирования:
-  • подкоманды (включая алиасы) — интроспекция парсера argparse (cli/__main__.py);
-  • разделы TUI — M_TARGETS (cli/sections.py).
+Подкоманды и разделы TUI берутся из парсера argparse (cli/__main__.py).
 
 Файл `scripts/start-completion.bash` — производный артефакт: пересобирается командой
 `start completion`. `start completion --check` сверяет его с текущим CLI (для pre-commit/CI).
@@ -13,11 +12,10 @@ from __future__ import annotations
 import argparse
 
 from .config import REPO_DIR
-from .sections import M_ALIASES, M_TARGETS
 
 COMPLETION_PATH = REPO_DIR / "scripts" / "start-completion.bash"
 
-# Структура функции фиксированная; подставляются только два списка слов. Двойные
+# Структура функции фиксированная; подставляется список команд. Двойные
 # фигурные скобки — экранирование для str.format (в выходном bash это одинарные).
 _TEMPLATE = """\
 # start-completion.bash — bash-автодополнение для CLI `start`.
@@ -30,21 +28,27 @@ _TEMPLATE = """\
 # по имени команды). Без bash-completion — `source` этот файл в ~/.bashrc.
 
 _start_completion() {{
-    local cur subcmds sections
+    local cur subcmds index
     COMPREPLY=()
     cur="${{COMP_WORDS[COMP_CWORD]}}"
     subcmds="{subcmds}"
-    sections="{sections}"
 
-    if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=( $(compgen -W "$subcmds" -- "$cur") )
+    # Bash может разбивать tab:skills на отдельные слова по двоеточию.
+    if [ "${{COMP_WORDS[1]}}" = tab ] && [ "${{COMP_WORDS[2]}}" = : ] && [ "$COMP_CWORD" -le 3 ]; then
+        cur="tab:${{COMP_WORDS[3]}}"
+    elif [ "$COMP_CWORD" -ne 1 ]; then
         return
     fi
-    case "${{COMP_WORDS[1]}}" in
-        m|manage)
-            [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "$sections" -- "$cur") )
-            ;;
-    esac
+    if [ "$COMP_CWORD" -ge 1 ]; then
+        COMPREPLY=( $(compgen -W "$subcmds" -- "$cur") )
+        if [[ "$COMP_WORDBREAKS" == *:* && "$cur" == *:* ]]; then
+            for index in "${{!COMPREPLY[@]}}"; do
+                COMPREPLY[$index]="${{COMPREPLY[$index]#*:}}"
+            done
+        fi
+        return
+    fi
+
 }}
 complete -F _start_completion start
 """
@@ -57,9 +61,8 @@ def generate() -> str:
     parser = build_parser()
     sub_action = next(a for a in parser._actions
                       if isinstance(a, argparse._SubParsersAction))
-    subcmds = " ".join(sub_action.choices)   # включает алиасы (m) и completion
-    sections = " ".join(name for name in M_TARGETS if name not in M_ALIASES)
-    return _TEMPLATE.format(subcmds=subcmds, sections=sections)
+    subcmds = " ".join(sub_action.choices)
+    return _TEMPLATE.format(subcmds=subcmds)
 
 
 def write(*, check: bool = False) -> int:

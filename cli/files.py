@@ -22,7 +22,7 @@ def install_launcher(ctx: Ctx) -> None:
       от своего реального пути сквозь симлинк, поэтому работает независимо от cwd;
       ~/.local/bin обычно уже в PATH);
     • ~/.local/share/bash-completion/completions/start -> scripts/start-completion.bash —
-      bash-автодополнение подкоманд и разделов (`start m <TAB>`). bash-completion@2
+      bash-автодополнение подкоманд и разделов (`start <TAB>`). bash-completion@2
       подхватывает его по имени команды; без него — source файла в ~/.bashrc.
 
     Каталоги создаём при отсутствии.

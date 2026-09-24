@@ -576,9 +576,9 @@ def _command_skill(source: Path, destination: Path) -> None:
     )
 
 
-def _generate_codex_plugin(plugin: config.Plugin) -> Path:
+def _generate_codex_plugin(plugin: config.Plugin, destination: Path | None = None) -> Path:
     """Generate a valid Codex bundle for a Claude-native plugin."""
-    destination = data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
+    destination = destination or data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
     staged = destination.with_name(destination.name + ".next")
     if staged.exists():
         shutil.rmtree(staged)
@@ -656,7 +656,9 @@ def _generate_codex_plugin(plugin: config.Plugin) -> Path:
     return destination
 
 
-def codex_plugin(plugin: config.Plugin, *, dry_run: bool = False) -> Path:
+def codex_plugin(
+    plugin: config.Plugin, *, dry_run: bool = False, destination: Path | None = None
+) -> Path:
     """Проверить или собрать автономный Codex bundle для plugin source."""
     native = plugin.platform_paths.get("codex")
     if dry_run:
@@ -675,10 +677,10 @@ def codex_plugin(plugin: config.Plugin, *, dry_run: bool = False) -> Path:
         for skill in _skill_roots(source_root, "claude"):
             if skill.name not in plugin.codex_exclude_skills:
                 normalized_skill_text(skill / "SKILL.md")
-        return data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
+        return destination or data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
 
     if not native:
-        return _generate_codex_plugin(plugin)
+        return _generate_codex_plugin(plugin, destination)
 
     skills = _skill_roots(native, "codex")
     declared = {(skill / "SKILL.md").resolve() for skill in skills}
@@ -691,7 +693,7 @@ def codex_plugin(plugin: config.Plugin, *, dry_run: bool = False) -> Path:
         except AdapterError:
             invalid_undeclared.append(skill_file)
 
-    destination = data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
+    destination = destination or data_dir() / "generated" / "codex" / "plugins" / plugin.plugin
     staged = destination.with_name(destination.name + ".next")
     if staged.exists():
         shutil.rmtree(staged)

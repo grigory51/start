@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
+import sys
 from pathlib import Path
 from uuid import UUID
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from cli.commands.codex_sessions import export_session, load_sessions
 
 
 def main() -> int:
@@ -20,52 +23,20 @@ def main() -> int:
     except ValueError:
         parser.error("session_id должен быть UUID")
 
-    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-    matches = [
-        path
-        for root in (codex_home / "sessions", codex_home / "archived_sessions")
-        if root.is_dir()
-        for path in root.rglob(f"*-{session_id}.jsonl")
-    ]
-    if not matches:
-        parser.error(f"сессия {session_id} не найдена в {codex_home}")
-    source = max(matches, key=lambda path: path.stat().st_mtime)
+    session = next((item for item in load_sessions() if item.id == session_id), None)
+    if session is None:
+        parser.error(f"сессия {session_id} не найдена")
 
     default_output = Path.home() / "Downloads" / f"codex-{session_id}.md"
     if args.output:
-        output = Path(args.output).expanduser()
+        output = Path(args.output).expanduser().absolute()
     else:
         raw_output = input(f"Файл [{default_output}]: ").strip()
-        output = Path(raw_output).expanduser() if raw_output else default_output
-    if output.exists():
-        parser.error(f"файл уже существует: {output}")
-
-    sections = [f"# Codex session {session_id}"]
-    with source.open() as transcript:
-        for line_number, line in enumerate(transcript, start=1):
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError as error:
-                raise ValueError(f"некорректный JSONL, строка {line_number}: {source}") from error
-            payload = event.get("payload", {})
-            if event.get("type") != "response_item" or payload.get("type") != "message":
-                continue
-            role = payload.get("role")
-            if role not in ("user", "assistant"):
-                continue
-            text = "\n".join(
-                str(item["text"])
-                for item in payload.get("content", [])
-                if isinstance(item, dict) and "text" in item
-            ).strip()
-            if not text or text.startswith("<skill>"):
-                continue
-            title = "Пользователь" if role == "user" else "Codex"
-            sections.append(f"## {title}\n\n{text}")
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text("\n\n".join(sections) + "\n")
-    print(output)
+        output = Path(raw_output).expanduser().absolute() if raw_output else default_output
+    try:
+        print(export_session(session, str(output)))
+    except ValueError as error:
+        parser.error(str(error))
     return 0
 
 

@@ -32,7 +32,7 @@
 #              подкаталог с SKILL.md считается скилом.
 #   enabled  — какие скилы включить: ["*"] (все, по умолчанию), список имён папок
 #              (["a","c"]) либо [] (ни одного = источник выключен). TUI
-#              (`uv run start manage`) правит это поле прямо в этом файле.
+#              (`uv run start`) правит это поле прямо в этом файле.
 #   exclude  — какие скилы вообще не показывать (имена папок). Поверх enabled.
 #   requirements — список [[ai.skills.requirements]] = {name, check, hint}: внешние
 #              зависимости скилов источника (та же схема, что у [[ai.plugins.requirements]]).
@@ -72,6 +72,11 @@ enabled = ["*"]
 [[ai.skills]]
 path = "contrib/impeccable/.agents/skills"
 enabled = ["impeccable"]
+  [[ai.skills.requirements]]
+  name = "Impeccable engine"
+  check = 'IMPECCABLE_LAUNCHER_PROBE=1 sh contrib/impeccable/.agents/skills/impeccable/scripts/impeccable engine-probe'
+  install = 'sh contrib/impeccable/.agents/skills/impeccable/scripts/impeccable engine-probe'
+  hint = "Запустите start up --only ai:codex с доступом к сети и ~/.impeccable."
 
 [[ai.skills]]
 path = "contrib/gravity-ui-skills/skills"
@@ -380,23 +385,19 @@ default = "tcp"
 options = ["tcp", "udp", "all"]
 
 [[commands.tasks]]
-name = "codex-session-dump"
-category = "Codex"
-title = "Экспорт сессии Codex"
-description = "Сохранить диалог выбранной Codex-сессии в читаемый Markdown."
-[commands.tasks.run]
-darwin = 'python3 "$REPO/scripts/codex-session-dump.py"'
-linux = 'python3 "$REPO/scripts/codex-session-dump.py"'
-
-[[commands.tasks]]
 name = "codex-process-tree"
 category = "Codex"
 title = "Сессии Codex"
-description = "Сессии с CWD и ресурсами; Enter открывает дерево процессов выбранной сессии."
+description = "Активные и завершённые сессии: процессы, экспорт диалога и resume в новом окне терминала."
 refresh = 2
 [commands.tasks.view]
 darwin = "cli.commands.codex_process_tree:snapshot"
 linux = "cli.commands.codex_process_tree:snapshot"
+[[commands.tasks.filters]]
+name = "status"
+label = "Сессии"
+default = "Активные"
+options = ["Активные", "Все"]
 [[commands.tasks.filters]]
 name = "cwd"
 label = "CWD содержит"
@@ -404,7 +405,7 @@ label = "CWD содержит"
 name = "sort"
 label = "Сортировка"
 default = "MEM %"
-options = ["PID", "CWD", "PROCESSES", "CPU %", "MEM %", "ELAPSED"]
+options = ["PID", "CWD", "PROCESSES", "CPU %", "MEM %", "ELAPSED", "UPDATED"]
 [[commands.tasks.filters]]
 name = "order"
 label = "Порядок"

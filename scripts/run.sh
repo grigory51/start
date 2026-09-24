@@ -4,6 +4,7 @@
 #   2) fallback без uv — локальный .venv (python3 -m venv + pip install -e .), затем start.
 # Нужен, чтобы `make …` работал и на машинах без uv (напр. Debian-нетбук).
 set -euo pipefail
+export START_INVOKE_DIR="$PWD"
 
 # Резолвим путь скрипта сквозь симлинки (напр. ~/.local/bin/start -> scripts/run.sh),
 # чтобы REPO указывал на репозиторий, а не на каталог симлинка.
