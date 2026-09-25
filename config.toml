@@ -131,6 +131,11 @@ enabled = true
 path = "contrib/text-to-cad"
 enabled = true
 codex_exclude_skills = ["bambu-labs"]
+  [[ai.plugins.requirements]]
+  name = "cadgen (text-to-cad)"
+  check = "cadgen doctor contrib/text-to-cad/skills/cad-viewer"
+  install = 'uv tool install --python 3.12 "cadgen==$(cat contrib/text-to-cad/VERSION)"'
+  hint = 'uv tool install --python 3.12 "cadgen==$(cat contrib/text-to-cad/VERSION)"'
 
 [[ai.plugins]]
 path = "contrib/ponytail"
