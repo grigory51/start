@@ -181,7 +181,7 @@ name = "playwright"
 enabled = true
 [ai.mcp.server]
 command = "npx"
-args = ["@playwright/mcp@latest"]
+args = ["@playwright/mcp@latest", "--headless"]
 
 [[ai.mcp]]
 name = "figma"
