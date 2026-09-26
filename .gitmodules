@@ -82,3 +82,6 @@
 [submodule "contrib/awesome-gamedev-agent-skills"]
 	path = contrib/awesome-gamedev-agent-skills
 	url = https://github.com/gamedev-skills/awesome-gamedev-agent-skills
+[submodule "contrib/brag"]
+	path = contrib/brag
+	url = https://github.com/latent-spaces/brag

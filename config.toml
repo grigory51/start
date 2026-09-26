@@ -505,3 +505,7 @@ exclude = ["brand-positioning"]
 [[ai.skills]]
 path = "contrib/awesome-gamedev-agent-skills/skills/unity"
 enabled = ["unity-csharp-scripting", "unity-input-system", "unity-physics", "unity-animation", "unity-scriptableobjects", "unity-tilemap-2d", "unity-navmesh", "unity-build-pipeline"]
+
+[[ai.plugins]]
+path = "contrib/brag"
+enabled = true
