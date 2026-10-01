@@ -18,3 +18,4 @@ config.local.toml
 
 # OMC runtime (legacy, если вдруг создаётся)
 .omc/
+dotfiles/orcaslicer/default/filament/*.info
