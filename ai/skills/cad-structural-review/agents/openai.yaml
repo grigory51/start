@@ -1,0 +1,4 @@
+interface:
+  display_name: "CAD Structural Review"
+  short_description: "Слабые места, нагрузки и прочность CAD-моделей"
+  default_prompt: "Используй $cad-structural-review, чтобы найти слабые места модели, обосновать усиление и предложить проверку прочности."
