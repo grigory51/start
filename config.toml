@@ -338,6 +338,15 @@ sudo = true
 [commands.tasks.run]
 darwin = 'bash "$REPO/scripts/pxe/pxe-netboot.sh"'
 
+[[commands.tasks]]
+name = "media-stream"
+category = "Сеть"
+title = "Видео на ТВ (DLNA)"
+description = "Раздать папку по локальной сети для VLC на телевизоре. Требует rclone; Ctrl-C — стоп."
+[commands.tasks.run]
+darwin = 'bash "$REPO/scripts/media-stream.sh"'
+linux = 'bash "$REPO/scripts/media-stream.sh"'
+
 # Provision: netbook — обустройство headless-Debian нетбука Ansible-ролью netbook
 # (scripts/ansible): пакеты (tmux/mosh/mc/fzf/gpm), Wi-Fi (NetworkManager + nmtui), дебаг
 # сети/модема, dotfiles. provision.sh <role> прогоняет роль ЛОКАЛЬНО (-c local). Только Linux.
